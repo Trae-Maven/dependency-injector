@@ -11,7 +11,7 @@
 
     <name>Dependency-Injector</name>
 
-    <description>A lightweight and flexible Java dependency injection framework supporting constructor, field, and configuration injection.</description>
+    <description>A lightweight, high-performance Java dependency injection framework supporting constructor, field, and configuration injection.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
