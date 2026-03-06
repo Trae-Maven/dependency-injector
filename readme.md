@@ -6,6 +6,8 @@ Dependency Injector provides a simple container for managing object creation and
 
 The framework is designed to be lightweight, fast, and easy to integrate into existing Java applications.
 
+---
+
 ## Features
 
 - Constructor injection
@@ -16,6 +18,8 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Designed for modern Java (Java 21+)
 - Easy integration into existing projects
 
+---
+
 ## Built-in Dependencies
 
 Dependency Injector includes several internal helper utilities used throughout the framework.
@@ -23,6 +27,8 @@ Dependency Injector includes several internal helper utilities used throughout t
 - [Utilities](https://github.com/Trae-Maven/utilities) – Shared helper classes and performance-focused utilities used internally by the framework.
 
 These dependencies are included automatically through Maven and do not need to be installed separately.
+
+---
 
 ## Installation
 
