@@ -29,7 +29,6 @@ These dependencies are included automatically through Maven and do not need to b
 Add the dependency to your Maven project:
 
 ```xml
-
 <dependency>
     <groupId>io.github.trae</groupId>
     <artifactId>dependency-injector</artifactId>
