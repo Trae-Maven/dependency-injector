@@ -42,6 +42,14 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Reflections -->
+        <dependency>
+            <groupId>org.reflections</groupId>
+            <artifactId>reflections</artifactId>
+            <version>0.10.2</version>
+            <scope>compile</scope>
+        </dependency>
+
         <dependency>
             <groupId>io.github.trae</groupId>
             <artifactId>utilities</artifactId>
