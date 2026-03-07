@@ -14,9 +14,7 @@ import org.reflections.scanners.Scanners;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 /**
  * Entry point for the dependency injection framework.
@@ -43,6 +41,8 @@ import java.util.List;
  * {@link PostDestroy @PostDestroy} after the container is gone.</p>
  */
 public class Application {
+
+    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Repository.class);
 
     @Getter
     private static ComponentContainer componentContainer;
@@ -134,10 +134,14 @@ public class Application {
     private static List<Class<?>> scanComponents(final String basePackage) {
         final Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
 
-        final List<Class<?>> componentClassList = List.copyOf(reflections.getTypesAnnotatedWith(Component.class, false));
+        final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), list -> {
+            for (final Class<? extends Annotation> clazz : ANNOTATION_CLASS_LIST) {
+                list.addAll(reflections.getTypesAnnotatedWith(clazz, false));
+            }
+        });
 
         return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
-            for (final Class<?> type : componentClassList) {
+            for (final Class<?> type : componentClassSet) {
                 if (type.isInterface()) {
                     throw new InjectorException("@%s cannot be applied to interfaces: %s".formatted(Component.class.getSimpleName(), type.getName()));
                 }
