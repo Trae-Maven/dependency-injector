@@ -8,6 +8,8 @@ public interface IComponentContainer {
 
     void registerInstance(final Class<?> type, final Object instance);
 
+    void unregisterInstance(final Class<?> type);
+
     <T> T getInstance(final Class<T> type);
 
     boolean isInstance(final Class<?> type);
@@ -17,6 +19,8 @@ public interface IComponentContainer {
     List<Class<?>> getComponentClassList();
 
     void registerComponentClass(final Class<?> clazz);
+
+    void unregisterComponentClass(final Class<?> clazz);
 
     void clear();
 

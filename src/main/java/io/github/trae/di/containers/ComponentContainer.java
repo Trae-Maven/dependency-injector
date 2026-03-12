@@ -53,14 +53,29 @@ public class ComponentContainer implements IComponentContainer {
     @Override
     public void registerInstance(final Class<?> type, final Object instance) {
         if (type == null) {
-            throw new ComponentException("Type cannot be null.");
+            throw new IllegalArgumentException("Type cannot be null.");
         }
 
         if (instance == null) {
-            throw new ComponentException("Instance cannot be null.");
+            throw new IllegalArgumentException("Instance cannot be null.");
         }
 
         this.instanceMap.put(type, instance);
+    }
+
+    /**
+     * Removes the singleton instance registered under the given type.
+     *
+     * @param type the concrete class to unregister
+     * @throws ComponentException if the type is null
+     */
+    @Override
+    public void unregisterInstance(final Class<?> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        this.instanceMap.remove(type);
     }
 
     /**
@@ -72,7 +87,7 @@ public class ComponentContainer implements IComponentContainer {
     @Override
     public <T> T getInstance(final Class<T> type) {
         if (type == null) {
-            throw new ComponentException("Type cannot be null.");
+            throw new IllegalArgumentException("Type cannot be null.");
         }
 
         final Object instance = this.instanceMap.get(type);
@@ -92,7 +107,7 @@ public class ComponentContainer implements IComponentContainer {
     @Override
     public boolean isInstance(final Class<?> type) {
         if (type == null) {
-            throw new ComponentException("Type cannot be null.");
+            throw new IllegalArgumentException("Type cannot be null.");
         }
 
         return this.instanceMap.containsKey(type);
@@ -110,7 +125,7 @@ public class ComponentContainer implements IComponentContainer {
     @Override
     public <T> List<T> getAssignableInstanceList(final Class<T> type) {
         if (type == null) {
-            throw new ComponentException("Type cannot be null.");
+            throw new IllegalArgumentException("Type cannot be null.");
         }
 
         return (List<T>) this.assignableInstanceCacheMap.computeIfAbsent(type, key ->
@@ -144,10 +159,25 @@ public class ComponentContainer implements IComponentContainer {
     @Override
     public void registerComponentClass(final Class<?> clazz) {
         if (clazz == null) {
-            throw new ComponentException("Clazz cannot be null.");
+            throw new IllegalArgumentException("Clazz cannot be null.");
         }
 
         this.componentClassList.add(clazz);
+    }
+
+    /**
+     * Removes a component class from tracking.
+     *
+     * @param clazz the component class to unregister
+     * @throws ComponentException if the class is null
+     */
+    @Override
+    public void unregisterComponentClass(final Class<?> clazz) {
+        if (clazz == null) {
+            throw new IllegalArgumentException("Clazz cannot be null.");
+        }
+
+        this.componentClassList.remove(clazz);
     }
 
     /**

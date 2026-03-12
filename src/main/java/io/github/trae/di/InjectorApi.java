@@ -8,6 +8,7 @@ import io.github.trae.di.annotations.method.PreDestroy;
 import io.github.trae.di.annotations.type.Application;
 import io.github.trae.di.annotations.type.DependsOn;
 import io.github.trae.di.annotations.type.Order;
+import io.github.trae.di.annotations.type.SoftDependency;
 import io.github.trae.di.annotations.type.component.Component;
 import io.github.trae.di.annotations.type.component.Repository;
 import io.github.trae.di.annotations.type.component.Service;
@@ -25,6 +26,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * Entry point for the dependency injection framework.
@@ -37,7 +39,9 @@ import java.util.*;
  *       upstream applications are initialized before downstream ones.</li>
  *   <li>Classpath scanning — discovers {@link Component @Component} classes
  *       in each application's package and validates they are concrete types.
- *       Applications already initialized are skipped.</li>
+ *       Applications already initialized are skipped. Components annotated
+ *       with {@link SoftDependency @SoftDependency} are skipped if any of
+ *       their required packages are not present on the runtime classpath.</li>
  *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
  *       constraints then {@link Order @Order} priority.</li>
  *   <li>Construction — instantiates each component via
@@ -56,9 +60,11 @@ import java.util.*;
  * This allows independent plugins to boot in sequence via their own
  * {@code onEnable()} while sharing a single container.</p>
  *
- * <p>Shutdown reverses the process: {@link PreDestroy @PreDestroy} while
- * the container is still intact, then container cleanup, then
- * {@link PostDestroy @PostDestroy} after the container is gone.</p>
+ * <p>Shutdown is scoped per application — {@link #shutdown(Class)} only
+ * tears down the components belonging to that specific application.
+ * {@link PreDestroy @PreDestroy} and {@link PostDestroy @PostDestroy}
+ * are invoked only for that application's components. When the last
+ * application shuts down, the container is cleared.</p>
  */
 public class InjectorApi {
 
@@ -82,48 +88,6 @@ public class InjectorApi {
     private static ComponentContainer componentContainer;
 
     /**
-     * Returns the singleton instance of the given component type from
-     * the shared container. Works across all initialized applications —
-     * any application can retrieve any component regardless of which
-     * application registered it.
-     *
-     * <pre>{@code
-     * final ClientManager clientManager = InjectorApi.get(ClientManager.class);
-     * }</pre>
-     *
-     * @param type the component class to look up
-     * @param <T>  the component type
-     * @return the singleton instance
-     * @throws InjectorException if the container has not been initialized
-     */
-    public static <T> T get(final Class<T> type) {
-        if (getComponentContainer() == null) {
-            throw new InjectorException("Application has not been initialized.");
-        }
-
-        return getComponentContainer().getInstance(type);
-    }
-
-    /**
-     * Returns the component classes that were registered by the given
-     * {@link Application @Application}-annotated class during its
-     * initialization.
-     *
-     * <pre>{@code
-     * final List<Class<?>> projectOneComponents = InjectorApi.getComponentClassListByApplication(ProjectOne.class);
-     * final List<Class<?>> projectTwoComponents = InjectorApi.getComponentClassListByApplication(ProjectTwo.class);
-     * }</pre>
-     *
-     * @param applicationClass the {@code @Application}-annotated class
-     * @return an unmodifiable list of component classes registered by
-     * that application, or an empty list if the application
-     * has not been initialized
-     */
-    public static List<Class<?>> getComponentClassListByApplication(final Class<?> applicationClass) {
-        return Collections.unmodifiableList(applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList()));
-    }
-
-    /**
      * Initializes the dependency injection container by resolving the
      * {@link Application @Application} dependency tree rooted at the given
      * class, scanning all application packages in dependency order, and
@@ -141,8 +105,16 @@ public class InjectorApi {
      *                           {@link Component @Component}
      */
     public static void initialize(final Class<?> rootClass) {
+        if (rootClass == null) {
+            throw new IllegalArgumentException("Root Class cannot be null.");
+        }
+
         if (!(rootClass.isAnnotationPresent(Application.class))) {
-            throw new InjectorException("Root class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
+            throw new InjectorException("Root Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
+        }
+
+        if (applicationComponentMap.containsKey(rootClass)) {
+            throw new InjectorException("@%s has already been initialized: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
         }
 
         if (componentContainer == null) {
@@ -209,32 +181,171 @@ public class InjectorApi {
     }
 
     /**
-     * Shuts down the application by invoking destroy callbacks and
-     * clearing the container.
+     * Shuts down the specified application by invoking destroy callbacks
+     * and removing its components from the container.
      *
-     * <p>{@link PreDestroy @PreDestroy} methods are called while the
-     * container is still available. The container is then cleared and
-     * nulled. {@link PostDestroy @PostDestroy} methods are called on
-     * the saved instance references after the container is gone.</p>
+     * <p>{@link PreDestroy @PreDestroy} methods are called on the
+     * application's components while the container is still available.
+     * The components are then removed from the container.
+     * {@link PostDestroy @PostDestroy} methods are called on the saved
+     * instance references after removal.</p>
+     *
+     * <p>When the last application shuts down, the container itself
+     * is cleared and nulled.</p>
      *
      * @param rootClass the same root class used during initialization
      */
     public static void shutdown(final Class<?> rootClass) {
+        if (rootClass == null) {
+            throw new IllegalArgumentException("Root Class cannot be null.");
+        }
+
+        if (!(applicationComponentMap.containsKey(rootClass))) {
+            throw new InjectorException("@%s has not been initialized: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
+        }
+
         if (getComponentContainer() == null) {
             return;
         }
 
-        invokeLifecycle(PreDestroy.class);
+        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(rootClass, Collections.emptyList());
 
-        final List<Object> instanceList = getComponentContainer().getInstanceList();
+        final List<Object> instanceList = new ArrayList<>();
 
-        getComponentContainer().clear();
-        componentContainer = null;
-        initializedApplicationSet.clear();
-        applicationComponentMap.clear();
+        for (final Class<?> type : componentClassList) {
+            if (!(getComponentContainer().isInstance(type))) {
+                continue;
+            }
+
+            final Object instance = getComponentContainer().getInstance(type);
+
+            invokeAnnotatedMethods(instance, PreDestroy.class);
+
+            instanceList.add(instance);
+        }
+
+        for (final Class<?> type : componentClassList) {
+            getComponentContainer().unregisterInstance(type);
+            getComponentContainer().unregisterComponentClass(type);
+        }
+
+        applicationComponentMap.remove(rootClass);
+        initializedApplicationSet.remove(rootClass);
+
+        getComponentContainer().buildCache();
 
         for (final Object instance : instanceList) {
             invokeAnnotatedMethods(instance, PostDestroy.class);
+        }
+
+        if (initializedApplicationSet.isEmpty()) {
+            getComponentContainer().clear();
+            componentContainer = null;
+        }
+    }
+
+    /**
+     * Returns the singleton instance of the given component type from
+     * the shared container. Works across all initialized applications —
+     * any application can retrieve any component regardless of which
+     * application registered it.
+     *
+     * <pre>{@code
+     * final ClientManager clientManager = InjectorApi.get(ClientManager.class);
+     * }</pre>
+     *
+     * @param type the component class to look up
+     * @param <T>  the component type
+     * @return the singleton instance
+     * @throws InjectorException if the container has not been initialized
+     */
+    public static <T> T get(final Class<T> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (getComponentContainer() == null) {
+            throw new InjectorException("Application has not been initialized.");
+        }
+
+        return getComponentContainer().getInstance(type);
+    }
+
+    /**
+     * Returns the component classes that were registered by the given
+     * {@link Application @Application}-annotated class during its
+     * initialization.
+     *
+     * <pre>{@code
+     * final List<Class<?>> coreComponents = InjectorApi.getComponentClassListByApplication(CorePlugin.class);
+     * final List<Class<?>> clansComponents = InjectorApi.getComponentClassListByApplication(ClansPlugin.class);
+     * }</pre>
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     * @return an unmodifiable list of component classes registered by
+     * that application, or an empty list if the application
+     * has not been initialized
+     */
+    public static List<Class<?>> getComponentClassListByApplication(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        return Collections.unmodifiableList(applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList()));
+    }
+
+    /**
+     * Executes a callback against all components belonging to the
+     * specified application. The consumer is invoked immediately for
+     * each of the application's component instances.
+     *
+     * <p>This is the primary mechanism for platform integration — use
+     * it after {@link #initialize(Class)} to register components with
+     * external systems, and before {@link #shutdown(Class)} to
+     * unregister them.</p>
+     *
+     * <pre>{@code
+     * InjectorApi.initialize(CorePlugin.class);
+     *
+     * // Register listeners and commands after initialization
+     * InjectorApi.executeCallback(CorePlugin.class, instance -> {
+     *     if (instance instanceof Listener listener) {
+     *         Bukkit.getServer().getPluginManager().registerEvents(listener, this);
+     *     }
+     *
+     *     if (instance instanceof Command command) {
+     *         CommandHandler.registerCommand(command);
+     *     }
+     * });
+     * }</pre>
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     *                         to scope the callback to
+     * @param callback         the consumer to invoke for each component
+     */
+    public static void executeCallback(final Class<?> applicationClass, final Consumer<Object> callback) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (callback == null) {
+            throw new IllegalArgumentException("Callback cannot be null.");
+        }
+
+        if (getComponentContainer() == null) {
+            throw new InjectorException("Application has not been initialized.");
+        }
+
+        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
+
+        for (final Class<?> componentClass : componentClassList) {
+            if (!(getComponentContainer().isInstance(componentClass))) {
+                continue;
+            }
+
+            final Object instance = getComponentContainer().getInstance(componentClass);
+
+            callback.accept(instance);
         }
     }
 
@@ -253,6 +364,10 @@ public class InjectorApi {
      *                           dependency is detected
      */
     private static List<Class<?>> resolveApplicationOrder(final Class<?> rootClass) {
+        if (rootClass == null) {
+            throw new IllegalArgumentException("Root Class cannot be null.");
+        }
+
         final LinkedHashSet<Class<?>> resolved = new LinkedHashSet<>();
         final Set<Class<?>> visiting = new HashSet<>();
 
@@ -274,6 +389,18 @@ public class InjectorApi {
      *                           {@code @Application} or a cycle is detected
      */
     private static void visitApplication(final Class<?> applicationClass, final LinkedHashSet<Class<?>> resolved, final Set<Class<?>> visiting) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (resolved == null) {
+            throw new IllegalArgumentException("Resolved Class cannot be null.");
+        }
+
+        if (visiting == null) {
+            throw new IllegalArgumentException("Visiting cannot be null.");
+        }
+
         if (resolved.contains(applicationClass)) {
             return;
         }
@@ -287,8 +414,7 @@ public class InjectorApi {
         final Application annotation = applicationClass.getAnnotation(Application.class);
 
         if (annotation == null) {
-            throw new InjectorException("@%s dependency must be annotated with @%s: %s".formatted(
-                    Application.class.getSimpleName(), Application.class.getSimpleName(), applicationClass.getName()));
+            throw new InjectorException("@%s dependency must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), Application.class.getSimpleName(), applicationClass.getName()));
         }
 
         for (final Class<?> dependency : annotation.dependencies()) {
@@ -303,13 +429,20 @@ public class InjectorApi {
      * Scans the given package for {@link Component @Component}-annotated
      * classes, including meta-annotations such as {@code @Service} and
      * {@code @Repository}, and validates that each is a concrete type.
-     * Interfaces, abstract classes, enums, records, and annotations are rejected.
+     * Interfaces, abstract classes, enums, records, and annotations are
+     * rejected. Components annotated with {@link SoftDependency @SoftDependency}
+     * are skipped if any of their required packages are not found on the
+     * runtime classpath.
      *
      * @param basePackage the package to scan
      * @return an unmodifiable, deduplicated list of valid component classes
      * @throws InjectorException if a non-concrete type is annotated
      */
     private static List<Class<?>> scanComponents(final String basePackage) {
+        if (basePackage == null) {
+            throw new IllegalArgumentException("Base Package cannot be null.");
+        }
+
         final Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
 
         final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), list -> {
@@ -340,11 +473,47 @@ public class InjectorApi {
                     throw new InjectorException("@%s cannot be applied to annotations: %s".formatted(Component.class.getSimpleName(), type.getName()));
                 }
 
+                if (type.isAnnotationPresent(SoftDependency.class)) {
+                    if (!(isSoftDependencyAvailable(type.getAnnotation(SoftDependency.class)))) {
+                        continue;
+                    }
+                }
+
                 if (!(list.contains(type))) {
                     list.add(type);
                 }
             }
         }));
+    }
+
+    /**
+     * Checks whether all packages specified by the given
+     * {@link SoftDependency @SoftDependency} annotation are present
+     * on the runtime classpath.
+     *
+     * <p>Each package is checked by converting the package name to a
+     * resource path and looking it up via the current thread's context
+     * class loader. This works for any JAR loaded at runtime, regardless
+     * of whether it is a compile-time Maven dependency.</p>
+     *
+     * @param annotation the {@code @SoftDependency} annotation to check
+     * @return {@code true} if all required packages are available,
+     * {@code false} if any are missing
+     */
+    private static boolean isSoftDependencyAvailable(final SoftDependency annotation) {
+        if (annotation == null) {
+            throw new IllegalArgumentException("Annotation cannot be null");
+        }
+
+        for (final String basePackage : annotation.value()) {
+            final String path = basePackage.replace('.', '/');
+
+            if (Thread.currentThread().getContextClassLoader().getResource(path) == null) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -354,6 +523,10 @@ public class InjectorApi {
      * @param annotation the lifecycle annotation to invoke
      */
     private static void invokeLifecycle(final Class<? extends Annotation> annotation) {
+        if (annotation == null) {
+            throw new IllegalArgumentException("Annotation cannot be null.");
+        }
+
         for (final Object instance : getComponentContainer().getInstanceList()) {
             invokeAnnotatedMethods(instance, annotation);
         }
@@ -369,6 +542,14 @@ public class InjectorApi {
      *                           or invocation fails
      */
     private static void invokeAnnotatedMethods(final Object instance, final Class<? extends Annotation> annotation) {
+        if (instance == null) {
+            throw new IllegalArgumentException("Instance cannot be null.");
+        }
+
+        if (annotation == null) {
+            throw new IllegalArgumentException("Annotation cannot be null.");
+        }
+
         Class<?> clazz = instance.getClass();
 
         while (clazz != null && clazz != Object.class) {

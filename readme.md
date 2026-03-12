@@ -14,6 +14,8 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Stereotype annotations `@Service` and `@Repository` for semantic clarity
 - Multi-application support via `@Application` with dependency resolution across projects
 - Additive container — each application initializes independently and shares a single container
+- Conditional component registration via `@SoftDependency` for optional runtime dependencies
+- Per-application component callbacks via `executeCallback` for platform integration
 - Constructor injection with greedy constructor selection
 - Field injection via `@Inject` with full class hierarchy traversal
 - Collection injection (`List`, `Set`) for both constructors and fields
@@ -110,7 +112,7 @@ public class UserService {
 }
 ```
 
-Field injection via `@Inject` is also supported for cases where constructor injection is not practical. Injected fields must not be declared `final`, as they are assigned reflectively after construction.```java
+Field injection via `@Inject` is also supported for cases where constructor injection is not practical. Injected fields must not be declared `final`, as they are assigned reflectively after construction.
 ```java
 @Service
 public class OrderService {
@@ -168,6 +170,99 @@ public class FactionManager {
 }
 ```
 
+### Soft Dependencies
+
+Use `@SoftDependency` to conditionally register a component based on whether an external library is present on the runtime classpath. If any of the specified packages are not found, the component is skipped entirely — it is never registered, constructed, or injected.
+
+No Maven dependency is required — the check is purely at runtime against whatever JARs are loaded on the classpath.
+```java
+@SoftDependency("com.stripe.api")
+@Component
+public class StripePaymentService {}
+```
+
+Multiple packages can be specified — all must be present for the component to be registered:
+```java
+@SoftDependency({"com.rabbitmq.client", "io.lettuce.core"})
+@Component
+public class MessageBrokerAdapter {}
+```
+
+### Execute Callback
+
+Use `InjectorApi.executeCallback(...)` to iterate all components belonging to a specific application and execute logic against each instance. Call it after `initialize()` to register components with external systems, and before `shutdown()` to unregister them.
+```java
+@Application
+public class CorePlugin extends JavaPlugin {
+
+    @Override
+    public void onEnable() {
+        InjectorApi.initialize(CorePlugin.class);
+
+        InjectorApi.executeCallback(CorePlugin.class, instance -> {
+            if (instance instanceof Listener listener) {
+                Bukkit.getServer().getPluginManager().registerEvents(listener, this);
+            }
+
+            if (instance instanceof Command command) {
+                CommandHandler.registerCommand(command);
+            }
+        });
+    }
+
+    @Override
+    public void onDisable() {
+        InjectorApi.executeCallback(CorePlugin.class, instance -> {
+            if (instance instanceof Listener listener) {
+                HandlerList.unregisterAll(listener);
+            }
+
+            if (instance instanceof Command command) {
+                CommandHandler.unregisterCommand(command);
+            }
+        });
+
+        InjectorApi.shutdown(CorePlugin.class);
+    }
+}
+```
+
+For platforms with shared boilerplate like Bukkit, you can extract the callback logic into an abstract base class. Every plugin that extends it gets automatic listener and command registration with zero per-plugin configuration:
+```java
+public abstract class SpigotPlugin extends JavaPlugin {
+
+    @Override
+    public void onEnable() {
+        InjectorApi.initialize(this.getClass());
+
+        InjectorApi.executeCallback(this.getClass(), instance -> {
+            if (instance instanceof Listener listener) {
+                Bukkit.getServer().getPluginManager().registerEvents(listener, this);
+            }
+        });
+    }
+
+    @Override
+    public void onDisable() {
+        InjectorApi.executeCallback(this.getClass(), instance -> {
+            if (instance instanceof Listener listener) {
+                HandlerList.unregisterAll(listener);
+            }
+        });
+
+        InjectorApi.shutdown(this.getClass());
+    }
+}
+
+@Application
+public class CorePlugin extends SpigotPlugin {
+}
+
+@Application(dependencies = CorePlugin.class)
+public class FactionsPlugin extends SpigotPlugin {
+}
+```
+
 ### Retrieving Components
 
 Use `InjectorApi.get(...)` to retrieve any component from any application:
@@ -191,6 +286,7 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 | `@Component` | Class | Marks a class as a managed singleton |
 | `@Service` | Class | Stereotype for service-layer components |
 | `@Repository` | Class | Stereotype for data-access components |
+| `@SoftDependency` | Class | Conditionally registers a component based on runtime classpath availability |
 | `@Inject` | Field | Injects a dependency from the container |
 | `@Order` | Class | Controls initialization priority (lower = earlier) |
 | `@DependsOn` | Class | Declares explicit initialization dependencies |
