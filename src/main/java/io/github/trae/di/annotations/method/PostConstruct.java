@@ -1,4 +1,6 @@
-package io.github.trae.di.annotations;
+package io.github.trae.di.annotations.method;
+
+import io.github.trae.di.annotations.field.Inject;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

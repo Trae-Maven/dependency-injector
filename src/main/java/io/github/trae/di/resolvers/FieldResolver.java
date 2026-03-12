@@ -1,6 +1,6 @@
 package io.github.trae.di.resolvers;
 
-import io.github.trae.di.annotations.Inject;
+import io.github.trae.di.annotations.field.Inject;
 import io.github.trae.di.containers.ComponentContainer;
 import io.github.trae.di.exceptions.DependencyException;
 import io.github.trae.di.resolvers.abstracts.AbstractResolver;

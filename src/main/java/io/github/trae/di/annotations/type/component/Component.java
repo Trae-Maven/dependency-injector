@@ -1,4 +1,8 @@
-package io.github.trae.di.annotations;
+package io.github.trae.di.annotations.type.component;
+
+import io.github.trae.di.annotations.field.Inject;
+import io.github.trae.di.annotations.type.DependsOn;
+import io.github.trae.di.annotations.type.Order;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

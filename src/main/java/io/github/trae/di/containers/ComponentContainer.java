@@ -1,5 +1,6 @@
 package io.github.trae.di.containers;
 
+import io.github.trae.di.InjectorApi;
 import io.github.trae.di.containers.interfaces.IComponentContainer;
 import io.github.trae.di.exceptions.ComponentException;
 import io.github.trae.utilities.UtilJava;
@@ -163,7 +164,7 @@ public class ComponentContainer implements IComponentContainer {
     /**
      * Resets the assignable instance cache so it can be lazily
      * repopulated now that the container is fully initialized.
-     * Called once at the end of {@link io.github.trae.di.Application#initialize(Class)}.
+     * Called once at the end of {@link InjectorApi#initialize(Class)}.
      */
     @Override
     public void buildCache() {

@@ -1,7 +1,7 @@
 package io.github.trae.di.sorters;
 
-import io.github.trae.di.annotations.DependsOn;
-import io.github.trae.di.annotations.Order;
+import io.github.trae.di.annotations.type.DependsOn;
+import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.exceptions.DependencyException;
 
 import java.util.*;
