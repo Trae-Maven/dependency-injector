@@ -22,6 +22,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Explicit dependency ordering via `@DependsOn` with circular detection
 - Priority-based initialization via `@Order`
 - Composable `ComponentComparator` extension point for external sorting logic
+- Reverse-order shutdown — components are destroyed in the opposite order they were initialized
 - Lifecycle callbacks: `@PostConstruct`, `@ApplicationReady`, `@PreDestroy`, `@PostDestroy`
 - Circular dependency detection at both annotation and runtime level
 - Lightweight dependency container with assignable-type lookups
@@ -269,13 +270,15 @@ public abstract class SpigotPlugin extends JavaPlugin {
 }
 
 @Application
-public class CorePlugin extends SpigotPlugin {
-}
+public class CorePlugin extends SpigotPlugin {}
 
 @Application(dependencies = CorePlugin.class)
-public class FactionsPlugin extends SpigotPlugin {
-}
+public class FactionsPlugin extends SpigotPlugin {}
 ```
+
+### Initialization and Shutdown Order
+
+During initialization, components are constructed and wired in sorted order — dependencies first, then priority, then any registered comparators. During shutdown, components are destroyed in the reverse of their initialization order so that children are torn down before their parents.
 
 ### Retrieving Components
 

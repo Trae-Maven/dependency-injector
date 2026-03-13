@@ -43,7 +43,8 @@ import java.util.function.Consumer;
  *       with {@link SoftDependency @SoftDependency} are skipped if any of
  *       their required packages are not present on the runtime classpath.</li>
  *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
- *       constraints then {@link Order @Order} priority.</li>
+ *       constraints, then {@link Order @Order} priority, then any registered
+ *       {@link io.github.trae.di.sorters.comparators.ComponentComparator ComponentComparators}.</li>
  *   <li>Construction — instantiates each component via
  *       {@link ConstructorResolver}, resolving constructor dependencies.</li>
  *   <li>Field injection — injects {@link Inject @Inject} fields via
@@ -62,6 +63,8 @@ import java.util.function.Consumer;
  *
  * <p>Shutdown is scoped per application — {@link #shutdown(Class)} only
  * tears down the components belonging to that specific application.
+ * Components are destroyed in reverse initialization order so that
+ * children are torn down before their parents.
  * {@link PreDestroy @PreDestroy} and {@link PostDestroy @PostDestroy}
  * are invoked only for that application's components. When the last
  * application shuts down, the container is cleared.</p>
@@ -184,11 +187,11 @@ public class InjectorApi {
      * Shuts down the specified application by invoking destroy callbacks
      * and removing its components from the container.
      *
-     * <p>{@link PreDestroy @PreDestroy} methods are called on the
-     * application's components while the container is still available.
-     * The components are then removed from the container.
-     * {@link PostDestroy @PostDestroy} methods are called on the saved
-     * instance references after removal.</p>
+     * <p>Components are processed in reverse initialization order so that
+     * children are torn down before their parents. {@link PreDestroy @PreDestroy}
+     * methods are called while the container is still available. The components
+     * are then removed from the container. {@link PostDestroy @PostDestroy}
+     * methods are called on the saved instance references after removal.</p>
      *
      * <p>When the last application shuts down, the container itself
      * is cleared and nulled.</p>
@@ -208,7 +211,9 @@ public class InjectorApi {
             return;
         }
 
-        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(rootClass, Collections.emptyList());
+        final List<Class<?>> componentClassList = new ArrayList<>(applicationComponentMap.getOrDefault(rootClass, Collections.emptyList()));
+
+        Collections.reverse(componentClassList);
 
         final List<Object> instanceList = new ArrayList<>();
 
@@ -250,10 +255,6 @@ public class InjectorApi {
      * any application can retrieve any component regardless of which
      * application registered it.
      *
-     * <pre>{@code
-     * final ClientManager clientManager = InjectorApi.get(ClientManager.class);
-     * }</pre>
-     *
      * @param type the component class to look up
      * @param <T>  the component type
      * @return the singleton instance
@@ -275,11 +276,6 @@ public class InjectorApi {
      * Returns the component classes that were registered by the given
      * {@link Application @Application}-annotated class during its
      * initialization.
-     *
-     * <pre>{@code
-     * final List<Class<?>> coreComponents = InjectorApi.getComponentClassListByApplication(CorePlugin.class);
-     * final List<Class<?>> clansComponents = InjectorApi.getComponentClassListByApplication(ClansPlugin.class);
-     * }</pre>
      *
      * @param applicationClass the {@code @Application}-annotated class
      * @return an unmodifiable list of component classes registered by
@@ -303,21 +299,6 @@ public class InjectorApi {
      * it after {@link #initialize(Class)} to register components with
      * external systems, and before {@link #shutdown(Class)} to
      * unregister them.</p>
-     *
-     * <pre>{@code
-     * InjectorApi.initialize(CorePlugin.class);
-     *
-     * // Register listeners and commands after initialization
-     * InjectorApi.executeCallback(CorePlugin.class, instance -> {
-     *     if (instance instanceof Listener listener) {
-     *         Bukkit.getServer().getPluginManager().registerEvents(listener, this);
-     *     }
-     *
-     *     if (instance instanceof Command command) {
-     *         CommandHandler.registerCommand(command);
-     *     }
-     * });
-     * }</pre>
      *
      * @param applicationClass the {@code @Application}-annotated class
      *                         to scope the callback to
