@@ -3,13 +3,14 @@ package io.github.trae.di.sorters;
 import io.github.trae.di.annotations.type.DependsOn;
 import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.exceptions.DependencyException;
+import io.github.trae.di.sorters.comparators.ComponentComparator;
 
 import java.util.*;
 
 /**
  * Sorts component classes to determine initialization order.
  *
- * <p>Sorting is performed in two phases:</p>
+ * <p>Sorting is performed in phases:</p>
  * <ol>
  *   <li>Topological sort based on {@link DependsOn} — guarantees that
  *       dependencies are initialized before the components that require them.
@@ -17,13 +18,46 @@ import java.util.*;
  *   <li>Stable sort by {@link Order} value — lower values are initialized
  *       first. Components without {@code @Order} default to
  *       {@link Integer#MAX_VALUE}.</li>
+ *   <li>Additional {@link ComponentComparator} instances — applied in
+ *       registration order, allowing external frameworks to refine
+ *       initialization order after the core sorting phases.</li>
  * </ol>
  */
 public class ComponentSorter {
 
+    private static final List<ComponentComparator> comparatorList = new ArrayList<>();
+
+    /**
+     * Registers an additional comparator to be applied after the
+     * default sorting phases. Comparators are applied in registration
+     * order via {@link Comparator#thenComparing(Comparator)}.
+     *
+     * @param comparator the comparator to append
+     */
+    public static void addComparator(final ComponentComparator comparator) {
+        if (comparator == null) {
+            throw new IllegalArgumentException("Comparator cannot be null.");
+        }
+
+        comparatorList.add(comparator);
+    }
+
+    /**
+     * Removes a previously registered comparator.
+     *
+     * @param comparator the comparator to remove
+     */
+    public static void removeComparator(final ComponentComparator comparator) {
+        if (comparator == null) {
+            throw new IllegalArgumentException("Comparator cannot be null.");
+        }
+
+        comparatorList.remove(comparator);
+    }
+
     /**
      * Sorts the given component classes by dependency constraints first,
-     * then by priority order.
+     * then by priority order, then by any registered external comparators.
      *
      * @param componentClassList the unordered list of component classes
      * @return a new list sorted in initialization order
@@ -31,11 +65,17 @@ public class ComponentSorter {
      *                             reference is detected
      */
     public static List<Class<?>> sort(final List<Class<?>> componentClassList) {
-        final List<Class<?>> dependenciesSortedList = topologicalSort(componentClassList);
+        final List<Class<?>> sortedList = topologicalSort(componentClassList);
 
-        dependenciesSortedList.sort(Comparator.comparingInt(ComponentSorter::getOrder));
+        Comparator<Class<?>> comparator = Comparator.comparingInt(ComponentSorter::getOrder);
 
-        return dependenciesSortedList;
+        for (final ComponentComparator additional : comparatorList) {
+            comparator = comparator.thenComparing(additional);
+        }
+
+        sortedList.sort(comparator);
+
+        return sortedList;
     }
 
     /**

@@ -21,6 +21,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Collection injection (`List`, `Set`) for both constructors and fields
 - Explicit dependency ordering via `@DependsOn` with circular detection
 - Priority-based initialization via `@Order`
+- Composable `ComponentComparator` extension point for external sorting logic
 - Lifecycle callbacks: `@PostConstruct`, `@ApplicationReady`, `@PreDestroy`, `@PostDestroy`
 - Circular dependency detection at both annotation and runtime level
 - Lightweight dependency container with assignable-type lookups
@@ -187,6 +188,19 @@ Multiple packages can be specified — all must be present for the component to 
 @Component
 public class MessageBrokerAdapter {}
 ```
+
+### Component Comparators
+
+Use `ComponentSorter.addComparator(...)` to register custom sorting logic that runs after the default `@DependsOn` and `@Order` phases. This allows external frameworks to influence initialization order without modifying the core DI.
+```java
+ComponentSorter.addComparator((a, b) -> {
+    return Integer.compare(getPriority(a), getPriority(b));
+});
+
+InjectorApi.initialize(CorePlugin.class);
+```
+
+Comparators are chained in registration order — each one acts as a tiebreaker for the previous phase. This is the mechanism used by the [Hierarchy-Framework](https://github.com/Trae-Maven/hierarchy-framework) to ensure Managers initialize before Modules before SubModules.
 
 ### Execute Callback
 
