@@ -32,6 +32,22 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 
 ---
 
+## Requirements
+
+Dependency-Injector has no external runtime dependencies.
+
+The following is only needed at compile time for annotation processing:
+```xml
+<dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <version>1.18.36</version>
+    <scope>provided</scope>
+</dependency>
+```
+
+---
+
 ## Built-in Dependencies
 
 Dependency Injector includes several internal helper utilities used throughout the framework.
