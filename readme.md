@@ -12,6 +12,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 
 - Automatic classpath scanning via `@Component` with meta-annotation support
 - Stereotype annotations `@Service` and `@Repository` for semantic clarity
+- `@Configuration` POJOs with JSON and YAML support, in-place reload and save
 - Multi-application support via `@Application` with dependency resolution across projects
 - Additive container — each application initializes independently and shares a single container
 - Conditional component registration via `@SoftDependency` for optional runtime dependencies
@@ -57,7 +58,16 @@ Dependency Injector includes several internal helper utilities used throughout t
 <dependency>
     <groupId>org.reflections</groupId>
     <artifactId>reflections</artifactId>
-    <version>0.10.2</version>
+</dependency>
+
+<dependency>
+    <groupId>com.google.code.gson</groupId>
+    <artifactId>gson</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.yaml</groupId>
+    <artifactId>snakeyaml</artifactId>
 </dependency>
 ```
 
@@ -141,6 +151,91 @@ public class OrderService {
     @Inject
     private List<PaymentHandler> paymentHandlers;
 }
+```
+
+### Configuration
+
+Use `@Configuration` to define config POJOs that are automatically loaded, injected, and support in-place reload. No base class is required — any POJO works. Field names are used directly as keys — static and transient fields are ignored.
+
+JSON is the default format. Use `ConfigType.YAML` for YAML:
+```java
+@Configuration("database")                              // JSON (default)
+@Configuration(value = "database", type = ConfigType.YAML)  // YAML
+```
+
+Set the configuration directory before initialization:
+```java
+@Application
+public class Main {
+
+    public static void main(final String[] args) {
+        InjectorApi.setConfigurationDirectory(Path.of("configs"));
+        InjectorApi.initialize(Main.class);
+    }
+}
+```
+
+Define a config class — field defaults become the initial file values:
+```java
+@AllArgsConstructor
+@NoArgsConstructor
+@Getter
+@Configuration("database")
+public class DatabaseConfig {
+
+    private String host = "localhost";
+    private int port = 3306;
+    private String username = "root";
+    private String password = "changeme";
+    private boolean debugMode = false;
+}
+```
+
+On first run, this creates `configs/database.json`:
+```json
+{
+  "host": "localhost",
+  "port": 3306,
+  "username": "root",
+  "password": "changeme",
+  "debugMode": false
+}
+```
+
+Or with `ConfigType.YAML`, it creates `configs/database.yml`:
+```yaml
+host: localhost
+port: 3306
+username: root
+password: changeme
+debugMode: false
+```
+
+Config instances are registered into the container and injectable like any other component:
+```java
+@AllArgsConstructor
+@Service
+public class DatabaseService {
+
+    private final DatabaseConfig databaseConfig;
+
+    @PostConstruct
+    public void onPostConstruct() {
+        System.out.println("Connecting to " + databaseConfig.getHost() + ":" + databaseConfig.getPort());
+    }
+}
+```
+
+Reload and save operations are handled centrally via `InjectorApi`. The existing instance in the container is updated in-place, so any component holding a reference will see the new values immediately:
+```java
+// Reload a single config from disk
+InjectorApi.reloadConfiguration(DatabaseConfig.class);
+
+// Reload all configs from disk
+InjectorApi.reloadConfigurations();
+
+// Save a single config to disk
+InjectorApi.saveConfiguration(DatabaseConfig.class);
 ```
 
 ### Multi-Application
@@ -296,13 +391,6 @@ public class FactionsPlugin extends SpigotPlugin {}
 
 During initialization, components are constructed and wired in sorted order — dependencies first, then priority, then any registered comparators. During shutdown, components are destroyed in the reverse of their initialization order so that children are torn down before their parents.
 
-### Retrieving Components
-
-Use `InjectorApi.get(...)` to retrieve any component from any application:
-```java
-final PlayerManager playerManager = InjectorApi.get(PlayerManager.class);
-```
-
 Use `InjectorApi.getComponentClassListByApplication(...)` to retrieve the component classes registered by a specific application:
 ```java
 final List<Class<?>> coreComponents = InjectorApi.getComponentClassListByApplication(CorePlugin.class);
@@ -319,6 +407,7 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 | `@Component` | Class | Marks a class as a managed singleton |
 | `@Service` | Class | Stereotype for service-layer components |
 | `@Repository` | Class | Stereotype for data-access components |
+| `@Configuration` | Class | Marks a class as a config POJO with JSON/YAML support, in-place reload and save |
 | `@SoftDependency` | Class | Conditionally registers a component based on runtime classpath availability |
 | `@Inject` | Field | Injects a dependency from the container |
 | `@Order` | Class | Controls initialization priority (lower = earlier) |

@@ -12,19 +12,24 @@ import io.github.trae.di.annotations.type.SoftDependency;
 import io.github.trae.di.annotations.type.component.Component;
 import io.github.trae.di.annotations.type.component.Repository;
 import io.github.trae.di.annotations.type.component.Service;
+import io.github.trae.di.configuration.annotations.Configuration;
 import io.github.trae.di.containers.ComponentContainer;
+import io.github.trae.di.exceptions.DependencyException;
 import io.github.trae.di.exceptions.InjectorException;
+import io.github.trae.di.resolvers.ConfigurationResolver;
 import io.github.trae.di.resolvers.ConstructorResolver;
 import io.github.trae.di.resolvers.FieldResolver;
 import io.github.trae.di.sorters.ComponentSorter;
 import io.github.trae.utilities.UtilJava;
 import lombok.Getter;
+import lombok.Setter;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -71,7 +76,7 @@ import java.util.function.Consumer;
  */
 public class InjectorApi {
 
-    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Repository.class);
+    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Repository.class, Configuration.class);
 
     /**
      * Tracks which {@link Application @Application}-annotated classes
@@ -89,6 +94,23 @@ public class InjectorApi {
 
     @Getter
     private static ComponentContainer componentContainer;
+
+    /**
+     * The base directory for {@link Configuration @Configuration} files.
+     * Must be set via {@link #setConfigurationDirectory(Path)} before
+     * {@link #initialize(Class)} if any configuration classes are used.
+     */
+    @Getter
+    @Setter
+    private static Path configurationDirectory;
+
+    /**
+     * The shared configuration resolver, created during initialization if
+     * a configuration directory is set. Retained so that configurations
+     * can be reloaded and saved after initialization.
+     */
+    @Getter
+    private static ConfigurationResolver configurationResolver;
 
     /**
      * Initializes the dependency injection container by resolving the
@@ -151,6 +173,10 @@ public class InjectorApi {
             initializedApplicationSet.add(applicationClass);
         }
 
+        if (configurationResolver == null && configurationDirectory != null) {
+            configurationResolver = new ConfigurationResolver(getComponentContainer(), configurationDirectory);
+        }
+
         final ConstructorResolver constructorResolver = new ConstructorResolver(getComponentContainer());
         final FieldResolver fieldResolver = new FieldResolver(getComponentContainer());
 
@@ -159,7 +185,14 @@ public class InjectorApi {
                 continue;
             }
 
-            constructorResolver.create(type);
+            if (type.isAnnotationPresent(Configuration.class)) {
+                if (configurationResolver == null) {
+                    throw new InjectorException("Configuration directory not set. Call InjectorApi.setConfigurationDirectory() before initialize().");
+                }
+                configurationResolver.resolve(type);
+            } else {
+                constructorResolver.create(type);
+            }
         }
 
         for (final Class<?> type : newComponentClassList) {
@@ -246,6 +279,7 @@ public class InjectorApi {
         if (initializedApplicationSet.isEmpty()) {
             getComponentContainer().clear();
             componentContainer = null;
+            configurationResolver = null;
         }
     }
 
@@ -270,6 +304,73 @@ public class InjectorApi {
         }
 
         return getComponentContainer().getInstance(type);
+    }
+
+    /**
+     * Reloads a single {@link Configuration @Configuration} from disk.
+     * The existing instance in the container is updated in-place, so any
+     * component holding a reference will see the new values immediately.
+     *
+     * @param type the {@code @Configuration}-annotated class to reload
+     * @throws InjectorException if the class is not annotated with
+     *                           {@code @Configuration}, the configuration
+     *                           resolver is not initialized, or the type
+     *                           is not a registered configuration
+     */
+    public static void reloadConfiguration(final Class<?> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (!(type.isAnnotationPresent(Configuration.class))) {
+            throw new InjectorException("Class must be annotated with @%s: %s".formatted(Configuration.class.getSimpleName(), type.getName()));
+        }
+
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        configurationResolver.reload(type);
+    }
+
+    /**
+     * Reloads all registered {@link Configuration @Configuration} instances
+     * from disk. Each existing instance is updated in-place.
+     *
+     * @throws InjectorException if the configuration resolver is not initialized
+     */
+    public static void reloadConfigurations() {
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        configurationResolver.reloadAll();
+    }
+
+    /**
+     * Saves a single {@link Configuration @Configuration} to disk using
+     * the format specified by {@link Configuration#type()}.
+     *
+     * @param type the {@code @Configuration}-annotated class to save
+     * @throws InjectorException if the class is not annotated with
+     *                           {@code @Configuration}, the configuration
+     *                           resolver is not initialized, or the type
+     *                           is not a registered configuration
+     */
+    public static void saveConfiguration(final Class<?> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (!(type.isAnnotationPresent(Configuration.class))) {
+            throw new InjectorException("Class must be annotated with @%s: %s".formatted(Configuration.class.getSimpleName(), type.getName()));
+        }
+
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        configurationResolver.save(type);
     }
 
     /**
@@ -407,6 +508,25 @@ public class InjectorApi {
     }
 
     /**
+     * Resolves the annotation name for error messages by checking which
+     * annotation from {@link #ANNOTATION_CLASS_LIST} is present on the
+     * given type.
+     *
+     * @param type the class to check
+     * @return the simple name of the matched annotation
+     * @throws DependencyException if no known annotation is present
+     */
+    private static String resolveAnnotationName(final Class<?> type) {
+        for (final Class<? extends Annotation> annotationClass : ANNOTATION_CLASS_LIST) {
+            if (type.isAnnotationPresent(annotationClass)) {
+                return annotationClass.getSimpleName();
+            }
+        }
+
+        throw new DependencyException("Could not resolve annotation type for %s".formatted(type.getName()));
+    }
+
+    /**
      * Scans the given package for {@link Component @Component}-annotated
      * classes, including meta-annotations such as {@code @Service} and
      * {@code @Repository}, and validates that each is a concrete type.
@@ -435,23 +555,23 @@ public class InjectorApi {
         return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
             for (final Class<?> type : componentClassSet) {
                 if (type.isInterface()) {
-                    throw new InjectorException("@%s cannot be applied to interfaces: %s".formatted(Component.class.getSimpleName(), type.getName()));
+                    throw new InjectorException("@%s cannot be applied to interfaces: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
 
                 if (Modifier.isAbstract(type.getModifiers())) {
-                    throw new InjectorException("@%s cannot be applied to abstract classes: %s".formatted(Component.class.getSimpleName(), type.getName()));
+                    throw new InjectorException("@%s cannot be applied to abstract classes: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
 
                 if (type.isEnum()) {
-                    throw new InjectorException("@%s cannot be applied to enums: %s".formatted(Component.class.getSimpleName(), type.getName()));
+                    throw new InjectorException("@%s cannot be applied to enums: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
 
                 if (type.isRecord()) {
-                    throw new InjectorException("@%s cannot be applied to records: %s".formatted(Component.class.getSimpleName(), type.getName()));
+                    throw new InjectorException("@%s cannot be applied to records: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
 
                 if (type.isAnnotation()) {
-                    throw new InjectorException("@%s cannot be applied to annotations: %s".formatted(Component.class.getSimpleName(), type.getName()));
+                    throw new InjectorException("@%s cannot be applied to annotations: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
 
                 if (type.isAnnotationPresent(SoftDependency.class)) {
