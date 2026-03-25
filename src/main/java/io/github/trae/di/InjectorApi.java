@@ -115,15 +115,13 @@ public class InjectorApi {
     private static ConfigurationResolver configurationResolver;
 
     /**
-     * Initializes the dependency injection container by resolving the
-     * {@link Application @Application} dependency tree rooted at the given
-     * class, scanning all application packages in dependency order, and
-     * wiring all discovered components into the shared container.
+     * Initializes the dependency injection container using only the
+     * {@link Application @Application}-annotated class. The class is used
+     * for package scanning and dependency resolution but is not registered
+     * as an instance in the container.
      *
-     * <p>Applications that have already been initialized are skipped,
-     * allowing each plugin to call {@code initialize()} independently
-     * during its own startup. The container is created on the first
-     * call and reused for all subsequent calls.</p>
+     * <p>Use {@link #initialize(Object)} instead when an existing instance
+     * of the application class should be injectable by other components.</p>
      *
      * @param rootClass the {@code @Application}-annotated entry point class
      * @throws InjectorException if the root class is not annotated,
@@ -136,6 +134,45 @@ public class InjectorApi {
             throw new IllegalArgumentException("Root Class cannot be null.");
         }
 
+        initialize(rootClass, null);
+    }
+
+    /**
+     * Initializes the dependency injection container and registers the
+     * given application instance into the container so it can be injected
+     * by other components.
+     *
+     * <p>The instance's class must be annotated with
+     * {@link Application @Application}. This is the preferred overload
+     * for platform plugins where the runtime creates the instance
+     * externally (e.g. Hytale's plugin loader, Bukkit's JavaPlugin).</p>
+     *
+     * @param rootInstance the {@code @Application}-annotated instance
+     * @throws InjectorException if the instance's class is not annotated,
+     *                           a circular application dependency is detected,
+     *                           or a non-concrete type is annotated with
+     *                           {@link Component @Component}
+     */
+    public static void initialize(final Object rootInstance) {
+        if (rootInstance == null) {
+            throw new IllegalArgumentException("Root Instance cannot be null.");
+        }
+
+        initialize(rootInstance.getClass(), rootInstance);
+    }
+
+    /**
+     * Core initialization logic shared by both {@link #initialize(Class)}
+     * and {@link #initialize(Object)}.
+     *
+     * <p>If {@code rootInstance} is non-null, it is registered into the
+     * container under its concrete class before any component construction
+     * begins, making it available for injection.</p>
+     *
+     * @param rootClass    the {@code @Application}-annotated class
+     * @param rootInstance the application instance to register, or {@code null}
+     */
+    private static void initialize(final Class<?> rootClass, final Object rootInstance) {
         if (!(rootClass.isAnnotationPresent(Application.class))) {
             throw new InjectorException("Root Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
         }
@@ -146,6 +183,11 @@ public class InjectorApi {
 
         if (componentContainer == null) {
             componentContainer = new ComponentContainer();
+        }
+
+        // Register the application instance if provided
+        if (rootInstance != null) {
+            getComponentContainer().registerInstance(rootClass, rootInstance);
         }
 
         final List<Class<?>> applicationOrderList = resolveApplicationOrder(rootClass);
@@ -278,6 +320,11 @@ public class InjectorApi {
             getComponentContainer().unregisterComponentClass(type);
         }
 
+        // Unregister the application instance if it was registered
+        if (getComponentContainer().isInstance(rootClass)) {
+            getComponentContainer().unregisterInstance(rootClass);
+        }
+
         applicationComponentMap.remove(rootClass);
         initializedApplicationSet.remove(rootClass);
 
@@ -292,6 +339,21 @@ public class InjectorApi {
             componentContainer = null;
             configurationResolver = null;
         }
+    }
+
+    /**
+     * Shuts down the application represented by the given instance.
+     * Convenience overload that extracts the class and delegates to
+     * {@link #shutdown(Class)}.
+     *
+     * @param rootInstance the same application instance used during initialization
+     */
+    public static void shutdown(final Object rootInstance) {
+        if (rootInstance == null) {
+            throw new IllegalArgumentException("Root Instance cannot be null.");
+        }
+
+        shutdown(rootInstance.getClass());
     }
 
     /**
