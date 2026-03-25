@@ -50,6 +50,8 @@ import java.util.function.Consumer;
  *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
  *       constraints, then {@link Order @Order} priority, then any registered
  *       {@link io.github.trae.di.sorters.comparators.ComponentComparator ComponentComparators}.</li>
+ *   <li>Configuration — resolves all {@link Configuration @Configuration}
+ *       classes first so they are available before any component constructor runs.</li>
  *   <li>Construction — instantiates each component via
  *       {@link ConstructorResolver}, resolving constructor dependencies.</li>
  *   <li>Field injection — injects {@link Inject @Inject} fields via
@@ -180,6 +182,8 @@ public class InjectorApi {
         final ConstructorResolver constructorResolver = new ConstructorResolver(getComponentContainer());
         final FieldResolver fieldResolver = new FieldResolver(getComponentContainer());
 
+        // Pass 1 — resolve all @Configuration classes first so they are
+        // available in the container before any component tries to inject them
         for (final Class<?> type : newComponentClassList) {
             if (getComponentContainer().isInstance(type)) {
                 continue;
@@ -190,9 +194,16 @@ public class InjectorApi {
                     throw new InjectorException("Configuration directory not set. Call InjectorApi.setConfigurationDirectory() before initialize().");
                 }
                 configurationResolver.resolve(type);
-            } else {
-                constructorResolver.create(type);
             }
+        }
+
+        // Pass 2 — construct all remaining components with dependencies resolved
+        for (final Class<?> type : newComponentClassList) {
+            if (getComponentContainer().isInstance(type)) {
+                continue;
+            }
+
+            constructorResolver.create(type);
         }
 
         for (final Class<?> type : newComponentClassList) {
