@@ -248,12 +248,12 @@ public class CorePlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        InjectorApi.initialize(CorePlugin.class);
+        InjectorApi.initialize(this);
     }
 
     @Override
     public void onDisable() {
-        InjectorApi.shutdown(CorePlugin.class);
+        InjectorApi.shutdown(this);
     }
 }
 
@@ -263,12 +263,12 @@ public class FactionsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        InjectorApi.initialize(FactionsPlugin.class);
+        InjectorApi.initialize(this);
     }
 
     @Override
     public void onDisable() {
-        InjectorApi.shutdown(FactionsPlugin.class);
+        InjectorApi.shutdown(this);
     }
 }
 ```
@@ -309,7 +309,7 @@ ComponentSorter.addComparator((a, b) -> {
     return Integer.compare(getPriority(a), getPriority(b));
 });
 
-InjectorApi.initialize(CorePlugin.class);
+InjectorApi.initialize(this);
 ```
 
 Comparators are chained in registration order — each one acts as a tiebreaker for the previous phase. This is the mechanism used by the [Hierarchy-Framework](https://github.com/Trae-Maven/hierarchy-framework) to ensure Managers initialize before Modules before SubModules.
@@ -323,7 +323,7 @@ public class CorePlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        InjectorApi.initialize(CorePlugin.class);
+        InjectorApi.initialize(this);
 
         InjectorApi.executeCallback(CorePlugin.class, instance -> {
             if (instance instanceof Listener listener) {
@@ -348,7 +348,7 @@ public class CorePlugin extends JavaPlugin {
             }
         });
 
-        InjectorApi.shutdown(CorePlugin.class);
+        InjectorApi.shutdown(this);
     }
 }
 ```
@@ -359,7 +359,7 @@ public abstract class SpigotPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        InjectorApi.initialize(this.getClass());
+        InjectorApi.initialize(this);
 
         InjectorApi.executeCallback(this.getClass(), instance -> {
             if (instance instanceof Listener listener) {
@@ -376,7 +376,7 @@ public abstract class SpigotPlugin extends JavaPlugin {
             }
         });
 
-        InjectorApi.shutdown(this.getClass());
+        InjectorApi.shutdown(this);
     }
 }
 
