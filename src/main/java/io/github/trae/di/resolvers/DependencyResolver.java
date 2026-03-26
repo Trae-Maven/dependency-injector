@@ -16,19 +16,35 @@ import java.util.Set;
  * Resolves dependencies from the container by type.
  *
  * <p>Single dependencies are resolved by exact type first, then by
- * assignable-type scan. Collection dependencies are resolved by
- * extracting the generic element type and gathering all assignable
- * instances into a {@link List} or {@link Set}.</p>
+ * assignable-type scan. If the dependency is a registered component
+ * class that has not yet been instantiated, it is constructed on demand
+ * via the {@link ConstructorResolver}. Collection dependencies are
+ * resolved by extracting the generic element type and gathering all
+ * assignable instances into a {@link List} or {@link Set}.</p>
  */
 public class DependencyResolver extends AbstractResolver implements IDependencyResolver {
+
+    private ConstructorResolver constructorResolver;
 
     public DependencyResolver(final ComponentContainer componentContainer) {
         super(componentContainer);
     }
 
     /**
+     * Sets the {@link ConstructorResolver} used for lazy construction
+     * of dependencies that have not yet been instantiated.
+     *
+     * @param constructorResolver the constructor resolver to delegate to
+     */
+    void setConstructorResolver(final ConstructorResolver constructorResolver) {
+        this.constructorResolver = constructorResolver;
+    }
+
+    /**
      * Resolves a single dependency by type. Checks for an exact match
-     * first, then falls back to an assignable-type lookup.
+     * first, then falls back to an assignable-type lookup. If the
+     * dependency is a registered component class that has not yet been
+     * instantiated, it is constructed on demand.
      *
      * @param type the dependency type to resolve
      * @return the resolved instance
@@ -40,13 +56,33 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
             return this.getComponentContainer().getInstance(type);
         }
 
-        final List<?> assignableInstanceList = this.getComponentContainer().getAssignableInstanceList(type);
-
-        if (assignableInstanceList.isEmpty()) {
-            throw new DependencyException("No component found for dependency: %s".formatted(type.getName()));
+        // Attempt lazy construction if the type is a registered but unbuilt component
+        if (this.constructorResolver != null) {
+            for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {
+                if (componentClass == type && !(this.getComponentContainer().isInstance(componentClass))) {
+                    this.constructorResolver.create(componentClass);
+                    return this.getComponentContainer().getInstance(componentClass);
+                }
+            }
         }
 
-        return assignableInstanceList.getFirst();
+        final List<?> assignableInstanceList = this.getComponentContainer().getAssignableInstanceList(type);
+
+        if (!(assignableInstanceList.isEmpty())) {
+            return assignableInstanceList.getFirst();
+        }
+
+        // Attempt lazy construction for assignable types (interfaces/superclasses)
+        if (this.constructorResolver != null) {
+            for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {
+                if (type.isAssignableFrom(componentClass) && !(this.getComponentContainer().isInstance(componentClass))) {
+                    this.constructorResolver.create(componentClass);
+                    return this.getComponentContainer().getInstance(componentClass);
+                }
+            }
+        }
+
+        throw new DependencyException("No component found for dependency: %s".formatted(type.getName()));
     }
 
     /**

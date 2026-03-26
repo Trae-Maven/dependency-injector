@@ -18,8 +18,10 @@ import java.util.Set;
  *
  * <p>The constructor with the most parameters is selected automatically.
  * Each parameter is resolved via {@link DependencyResolver}, supporting
- * both single-type and collection-type dependencies. Circular dependencies
- * are detected at creation time and result in a {@link DependencyException}.</p>
+ * both single-type and collection-type dependencies. If a dependency has
+ * not yet been instantiated, the resolver will trigger its construction
+ * on demand. Circular dependencies are detected at creation time and
+ * result in a {@link DependencyException}.</p>
  *
  * <p>Successfully created instances are immediately registered in the
  * container, making them available for subsequent resolutions.</p>
@@ -37,6 +39,7 @@ public class ConstructorResolver extends AbstractResolver implements IConstructo
         super(componentContainer);
 
         this.dependencyResolver = new DependencyResolver(componentContainer);
+        this.dependencyResolver.setConstructorResolver(this);
     }
 
     /**
@@ -51,6 +54,10 @@ public class ConstructorResolver extends AbstractResolver implements IConstructo
      */
     @Override
     public Object create(final Class<?> type) {
+        if (this.getComponentContainer().isInstance(type)) {
+            return this.getComponentContainer().getInstance(type);
+        }
+
         if (!(this.resolvingSet.add(type))) {
             throw new DependencyException("Circular dependency detected: %s".formatted(type.getName()));
         }
