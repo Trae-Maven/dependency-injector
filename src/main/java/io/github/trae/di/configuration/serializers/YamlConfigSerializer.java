@@ -6,6 +6,7 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
 import org.yaml.snakeyaml.introspector.BeanAccess;
+import org.yaml.snakeyaml.nodes.Tag;
 import org.yaml.snakeyaml.representer.Representer;
 
 import java.lang.reflect.Field;
@@ -50,12 +51,14 @@ public class YamlConfigSerializer implements ConfigSerializer {
 
     @Override
     public String serialize(final Object instance) {
-        final Yaml yaml = new Yaml(DUMPER_OPTIONS);
+        final Representer representer = new Representer(DUMPER_OPTIONS);
+        representer.addClassTag(instance.getClass(), Tag.MAP);
+
+        final Yaml yaml = new Yaml(representer, DUMPER_OPTIONS);
+
         yaml.setBeanAccess(BeanAccess.FIELD);
 
-        final String raw = yaml.dump(instance);
-
-        return injectComments(raw, instance.getClass());
+        return injectComments(yaml.dump(instance), instance.getClass());
     }
 
     /**
