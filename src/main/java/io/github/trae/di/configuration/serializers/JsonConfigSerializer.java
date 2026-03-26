@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import io.github.trae.di.configuration.annotations.Comment;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -134,6 +135,10 @@ public class JsonConfigSerializer implements ConfigSerializer {
         Class<?> clazz = type;
         while (clazz != null && clazz != Object.class) {
             for (final Field field : clazz.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+
                 final Comment comment = field.getAnnotation(Comment.class);
                 if (comment != null) {
                     commentMap.put(field.getName(), comment.value());

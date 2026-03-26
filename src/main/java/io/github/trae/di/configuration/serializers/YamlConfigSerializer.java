@@ -6,20 +6,19 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
 import org.yaml.snakeyaml.introspector.BeanAccess;
-import org.yaml.snakeyaml.nodes.Tag;
 import org.yaml.snakeyaml.representer.Representer;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * {@link ConfigSerializer} implementation using SnakeYAML for YAML format.
  *
- * <p>Produces block-style YAML with 2-space indentation. Field access is
- * set to {@link BeanAccess#FIELD} so that getters/setters are not required
- * — fields are read and written directly, matching the POJO-first approach
- * of the configuration system.</p>
+ * <p>Produces block-style YAML with 2-space indentation. Serialization
+ * converts the instance to an ordered map via reflection to preserve
+ * field declaration order and avoid the {@code !!} class type tag.</p>
  *
  * <p>Fields annotated with {@link Comment @Comment} have their comments
  * injected as {@code #} lines above the corresponding key in the output.</p>
@@ -28,6 +27,12 @@ public class YamlConfigSerializer implements ConfigSerializer {
 
     private static final DumperOptions DUMPER_OPTIONS = createDumperOptions();
 
+    /**
+     * Creates the shared {@link DumperOptions} with block flow style
+     * and 2-space indentation.
+     *
+     * @return the configured dumper options
+     */
     private static DumperOptions createDumperOptions() {
         final DumperOptions options = new DumperOptions();
 
@@ -38,6 +43,17 @@ public class YamlConfigSerializer implements ConfigSerializer {
         return options;
     }
 
+    /**
+     * Deserializes the given YAML string into an instance of the specified type.
+     *
+     * <p>Uses field-based access so that getters and setters are not required.
+     * Missing properties in the YAML content are silently skipped.</p>
+     *
+     * @param content the YAML string to deserialize
+     * @param type    the target class
+     * @param <T>     the target type
+     * @return the deserialized instance
+     */
     @Override
     public <T> T deserialize(final String content, final Class<T> type) {
         final Representer representer = new Representer(DUMPER_OPTIONS);
@@ -49,16 +65,53 @@ public class YamlConfigSerializer implements ConfigSerializer {
         return yaml.loadAs(content, type);
     }
 
+    /**
+     * Serializes the given instance into a YAML string with injected comments.
+     *
+     * <p>The instance is first converted to an ordered map via reflection
+     * to preserve field declaration order and avoid the {@code !!} class
+     * type tag. Comments from {@link Comment @Comment} annotations are
+     * then injected above their corresponding keys.</p>
+     *
+     * @param instance the configuration instance to serialize
+     * @return the serialized YAML string with comments
+     */
     @Override
     public String serialize(final Object instance) {
-        final Representer representer = new Representer(DUMPER_OPTIONS);
-        representer.addClassTag(instance.getClass(), Tag.MAP);
+        final LinkedHashMap<String, Object> map = toOrderedMap(instance);
 
-        final Yaml yaml = new Yaml(representer, DUMPER_OPTIONS);
-
+        final Yaml yaml = new Yaml(DUMPER_OPTIONS);
         yaml.setBeanAccess(BeanAccess.FIELD);
 
-        return injectComments(yaml.dump(instance), instance.getClass());
+        return injectComments(yaml.dump(map), instance.getClass());
+    }
+
+    /**
+     * Converts the given instance to an ordered map by reading all declared
+     * fields via reflection. Preserves the field declaration order so the
+     * YAML output matches the class layout.
+     *
+     * @param instance the instance to convert
+     * @return an ordered map of field names to their values
+     */
+    private static LinkedHashMap<String, Object> toOrderedMap(final Object instance) {
+        final LinkedHashMap<String, Object> map = new LinkedHashMap<>();
+
+        for (final Field field : instance.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+
+            field.setAccessible(true);
+
+            try {
+                map.put(field.getName(), field.get(instance));
+            } catch (final IllegalAccessException e) {
+                throw new RuntimeException("Failed to access field: " + field.getName(), e);
+            }
+        }
+
+        return map;
     }
 
     /**
@@ -79,14 +132,22 @@ public class YamlConfigSerializer implements ConfigSerializer {
         final StringBuilder result = new StringBuilder();
 
         for (final String line : yaml.split("\n")) {
+            final String trimmed = line.trim();
+
             for (final Map.Entry<String, String[]> entry : commentMap.entrySet()) {
-                if (line.startsWith(entry.getKey() + ":")) {
+                if (trimmed.startsWith(entry.getKey() + ":")) {
+                    final String indent = line.substring(0, line.indexOf(trimmed));
+
                     for (final String commentLine : entry.getValue()) {
-                        result.append("# ").append(commentLine).append("\n");
+                        result.append(indent)
+                                .append("# ")
+                                .append(commentLine)
+                                .append("\n");
                     }
                     break;
                 }
             }
+
             result.append(line).append("\n");
         }
 
@@ -95,7 +156,7 @@ public class YamlConfigSerializer implements ConfigSerializer {
 
     /**
      * Builds a map of field names to their {@link Comment @Comment} values
-     * by walking the class hierarchy.
+     * from the given class.
      *
      * @param type the class to scan
      * @return ordered map of field name to comment lines
@@ -103,15 +164,17 @@ public class YamlConfigSerializer implements ConfigSerializer {
     private static Map<String, String[]> buildCommentMap(final Class<?> type) {
         final Map<String, String[]> commentMap = new LinkedHashMap<>();
 
-        Class<?> clazz = type;
-        while (clazz != null && clazz != Object.class) {
-            for (final Field field : clazz.getDeclaredFields()) {
-                final Comment comment = field.getAnnotation(Comment.class);
-                if (comment != null) {
-                    commentMap.put(field.getName(), comment.value());
-                }
+        final Field[] fields = type.getDeclaredFields();
+
+        for (final Field field : fields) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
             }
-            clazz = clazz.getSuperclass();
+
+            final Comment comment = field.getAnnotation(Comment.class);
+            if (comment != null) {
+                commentMap.put(field.getName(), comment.value());
+            }
         }
 
         return commentMap;
