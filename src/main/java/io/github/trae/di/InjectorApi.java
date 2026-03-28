@@ -19,6 +19,7 @@ import io.github.trae.di.exceptions.InjectorException;
 import io.github.trae.di.resolvers.ConfigurationResolver;
 import io.github.trae.di.resolvers.ConstructorResolver;
 import io.github.trae.di.resolvers.FieldResolver;
+import io.github.trae.di.resolvers.SchedulerResolver;
 import io.github.trae.di.sorters.ComponentSorter;
 import io.github.trae.utilities.UtilJava;
 import lombok.Getter;
@@ -113,6 +114,13 @@ public class InjectorApi {
      */
     @Getter
     private static ConfigurationResolver configurationResolver;
+
+    /**
+     * Maps each {@link Application @Application}-annotated class to its
+     * {@link SchedulerResolver}, so scheduled tasks can be shut down
+     * per-application.
+     */
+    private static final Map<Class<?>, SchedulerResolver> schedulerResolverMap = new LinkedHashMap<>();
 
     /**
      * Initializes the dependency injection container using only the
@@ -267,6 +275,16 @@ public class InjectorApi {
 
             invokeAnnotatedMethods(instance, ApplicationReady.class);
         }
+
+        final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer());
+
+        for (final Class<?> type : newComponentClassList) {
+            final Object instance = getComponentContainer().getInstance(type);
+
+            schedulerResolver.register(instance);
+        }
+
+        schedulerResolverMap.put(rootClass, schedulerResolver);
     }
 
     /**
@@ -302,6 +320,12 @@ public class InjectorApi {
         Collections.reverse(componentClassList);
 
         final List<Object> instanceList = new ArrayList<>();
+
+        final SchedulerResolver schedulerResolver = schedulerResolverMap.remove(rootClass);
+
+        if (schedulerResolver != null) {
+            schedulerResolver.shutdown();
+        }
 
         for (final Class<?> type : componentClassList) {
             if (!(getComponentContainer().isInstance(type))) {

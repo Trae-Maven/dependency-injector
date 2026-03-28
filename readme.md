@@ -25,6 +25,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Priority-based initialization via `@Order`
 - Composable `ComponentComparator` extension point for external sorting logic
 - Reverse-order shutdown — components are destroyed in the opposite order they were initialized
+- Scheduled tasks via `@Scheduler` with fixed-rate and clock-aligned modes
 - Lifecycle callbacks: `@PostConstruct`, `@ApplicationReady`, `@PreDestroy`, `@PostDestroy`
 - Circular dependency detection at both annotation and runtime level
 - Lightweight dependency container with assignable-type lookups
@@ -470,6 +471,58 @@ public class CorePlugin extends SpigotPlugin {}
 public class FactionsPlugin extends SpigotPlugin {}
 ```
 
+### Scheduled Tasks
+
+Use `@Scheduler` to mark a no-argument method as a repeating task. The method is registered after the container is fully wired and continues to execute until the owning application is shut down. Each application manages its own scheduled tasks independently — shutting down one application does not affect another's schedulers.
+
+```java
+@Component
+public class MetricsService {
+
+    @Scheduler(delay = 30, unit = TimeUnit.SECONDS)
+    public void flushMetrics() {
+        // fires every 30 seconds from application start
+    }
+}
+```
+
+#### Clock-Aligned Mode
+
+Set `clock = true` to align executions to wall-clock boundaries that are multiples of the interval. The first execution is delayed until the next aligned boundary, then repeats at fixed rate.
+
+For example, a 5-minute interval fires at `:00`, `:05`, `:10`, `:15`, etc. regardless of when the application started:
+
+```java
+@Component
+public class SnapshotService {
+
+    @Scheduler(delay = 5, unit = TimeUnit.MINUTES, clock = true)
+    public void takeSnapshot() {
+        // fires at :00, :05, :10, :15, etc.
+    }
+}
+```
+
+A single component can have multiple scheduled methods with different intervals and modes:
+
+```java
+@Component
+public class MonitoringService {
+
+    @Scheduler(delay = 10, unit = TimeUnit.SECONDS)
+    public void pollHealth() {
+        // fixed-rate from application start
+    }
+
+    @Scheduler(delay = 1, unit = TimeUnit.MINUTES, clock = true)
+    public void reportMetrics() {
+        // clock-aligned to the start of each minute
+    }
+}
+```
+
+The backing thread pool is lazily initialized — no threads are allocated if an application has no `@Scheduler` methods. During shutdown, all scheduled tasks are cancelled before `@PreDestroy` methods are invoked.
+
 ### Initialization and Shutdown Order
 
 During initialization, components are constructed and wired in sorted order — dependencies first, then priority, then any registered comparators. During shutdown, components are destroyed in the reverse of their initialization order so that children are torn down before their parents.
@@ -501,3 +554,4 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 | `@ApplicationReady` | Method | Invoked after the container is fully wired |
 | `@PreDestroy` | Method | Invoked during shutdown, container is still available |
 | `@PostDestroy` | Method | Invoked during shutdown, container has been destroyed |
+| `@Scheduler` | Method | Repeating scheduled task with fixed-rate or clock-aligned mode |
