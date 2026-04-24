@@ -14,13 +14,6 @@ import java.lang.annotation.Target;
  * result in a {@link io.github.trae.di.exceptions.DependencyException}.
  * All referenced classes must themselves be registered components.</p>
  *
- * <pre>{@code
- * @DependsOn(DatabaseService.class, CacheService.class)
- * @Component
- * public class UserRepository {
- * }
- * }</pre>
- *
  * @see Order
  */
 @Retention(RetentionPolicy.RUNTIME)

@@ -10,7 +10,6 @@ import io.github.trae.di.annotations.type.DependsOn;
 import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.annotations.type.SoftDependency;
 import io.github.trae.di.annotations.type.component.Component;
-import io.github.trae.di.annotations.type.component.Repository;
 import io.github.trae.di.annotations.type.component.Service;
 import io.github.trae.di.configuration.annotations.Configuration;
 import io.github.trae.di.containers.ComponentContainer;
@@ -79,7 +78,7 @@ import java.util.function.Consumer;
  */
 public class InjectorApi {
 
-    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Repository.class, Configuration.class);
+    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Configuration.class);
 
     /**
      * Tracks which {@link Application @Application}-annotated classes
@@ -625,8 +624,8 @@ public class InjectorApi {
 
     /**
      * Scans the given package for {@link Component @Component}-annotated
-     * classes, including meta-annotations such as {@code @Service} and
-     * {@code @Repository}, and validates that each is a concrete type.
+     * classes, including meta-annotations such as {@code @Service}
+     * and validates that each is a concrete type.
      * Interfaces, abstract classes, enums, records, and annotations are
      * rejected. Components annotated with {@link SoftDependency @SoftDependency}
      * are skipped if any of their required packages are not found on the
