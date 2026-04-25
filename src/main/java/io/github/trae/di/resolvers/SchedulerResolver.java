@@ -23,15 +23,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>Supports two scheduling modes:</p>
  * <ul>
- *   <li><b>Standard</b> ({@code clock = false}) — the task runs at a
- *       fixed rate relative to when {@link #register(Object)} was called.</li>
+ *   <li><b>Standard</b> ({@code clock = false}) — the task waits an
+ *       optional initial delay, then runs at a fixed rate.</li>
  *   <li><b>Clock-aligned</b> ({@code clock = true}) — executions are
  *       anchored to wall-clock boundaries that are exact multiples of
- *       the configured interval (since the epoch). For example, a
- *       5-minute interval fires at {@code :00}, {@code :05}, {@code :10},
+ *       the configured period (since the epoch). For example, a
+ *       5-minute period fires at {@code :00}, {@code :05}, {@code :10},
  *       etc. Each tick is scheduled relative to the ideal boundary,
  *       preventing cumulative drift from execution duration or JVM
- *       scheduling jitter.</li>
+ *       scheduling jitter. {@code initialDelay} is ignored.</li>
  * </ul>
  *
  * <p>All scheduled futures are tracked so they can be cancelled
@@ -122,22 +122,21 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      *
      * <p>In clock-aligned mode, the initial delay is calculated as the
      * time remaining until the next boundary that is a multiple of the
-     * interval since the epoch. For example, if the interval is 5 minutes
-     * and the current time is 12:07:23, the first execution occurs at
-     * 12:10:00, then repeats every 5 minutes.</p>
+     * period since the epoch. {@code initialDelay} is ignored.</p>
      *
-     * <p>In standard mode, the task runs at a fixed rate relative to
-     * when registration occurred.</p>
+     * <p>In standard mode, the task waits {@code initialDelay} (or
+     * {@code period} if {@code initialDelay} is 0) then runs at a
+     * fixed rate of {@code period}.</p>
      *
      * @param instance   the component instance
      * @param method     the annotated method
      * @param annotation the scheduler annotation
      */
     private void schedule(final Object instance, final Method method, final Scheduler annotation) {
-        final long intervalMillis = annotation.unit().toMillis(annotation.delay());
+        final long periodMillis = annotation.unit().toMillis(annotation.period());
 
-        if (intervalMillis <= 0) {
-            throw new InjectorException("@%s delay must be positive: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()));
+        if (periodMillis <= 0) {
+            throw new InjectorException("@%s period must be positive: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()));
         }
 
         if (this.executorService == null) {
@@ -150,8 +149,12 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
         }
 
         if (annotation.clock()) {
-            scheduleClock(instance, method, intervalMillis);
+            scheduleClock(instance, method, periodMillis);
         } else {
+            final long initialDelayMillis = annotation.initialDelay() > 0
+                    ? annotation.unit().toMillis(annotation.initialDelay())
+                    : periodMillis;
+
             final Runnable task = () -> {
                 try {
                     method.invoke(instance);
@@ -160,7 +163,7 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
                 }
             };
 
-            final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, intervalMillis, intervalMillis, TimeUnit.MILLISECONDS);
+            final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, initialDelayMillis, periodMillis, TimeUnit.MILLISECONDS);
 
             this.scheduledFutureArrayList.add(future);
         }
@@ -172,14 +175,14 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      * <i>should</i> have fired (not when it actually ran), so
      * execution duration and JVM jitter never accumulate drift.
      *
-     * @param instance       the component instance
-     * @param method         the annotated method
-     * @param intervalMillis the interval in milliseconds
+     * @param instance     the component instance
+     * @param method       the annotated method
+     * @param periodMillis the period in milliseconds
      */
-    private void scheduleClock(final Object instance, final Method method, final long intervalMillis) {
+    private void scheduleClock(final Object instance, final Method method, final long periodMillis) {
         final long now = System.currentTimeMillis();
-        final long remainder = now % intervalMillis;
-        final long initialDelay = (remainder == 0) ? 0 : (intervalMillis - remainder);
+        final long remainder = now % periodMillis;
+        final long initialDelay = (remainder == 0) ? 0 : (periodMillis - remainder);
         final AtomicLong expected = new AtomicLong(now + initialDelay);
 
         final Runnable tick = new Runnable() {
@@ -191,7 +194,7 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
                     throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
                 }
 
-                final long nextExpected = expected.addAndGet(intervalMillis);
+                final long nextExpected = expected.addAndGet(periodMillis);
                 final long nextDelay = Math.max(0, nextExpected - System.currentTimeMillis());
 
                 scheduledFutureArrayList.add(executorService.schedule(this, nextDelay, TimeUnit.MILLISECONDS));
