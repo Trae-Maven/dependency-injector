@@ -123,6 +123,9 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      * and the current time is 12:07:23, the first execution occurs at
      * 12:10:00, then repeats every 5 minutes.</p>
      *
+     * <p>In standard mode, the task runs at a fixed rate relative to
+     * when registration occurred.</p>
+     *
      * @param instance   the component instance
      * @param method     the annotated method
      * @param annotation the scheduler annotation
@@ -134,25 +137,6 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
             throw new InjectorException("@%s delay must be positive: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()));
         }
 
-        final Runnable task = () -> {
-            try {
-                method.invoke(instance);
-            } catch (final Exception e) {
-                throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
-            }
-        };
-
-        final long initialDelayMillis;
-
-        if (annotation.clock()) {
-            final long nowMillis = System.currentTimeMillis();
-            final long remainder = nowMillis % intervalMillis;
-
-            initialDelayMillis = (remainder == 0) ? 0 : (intervalMillis - remainder);
-        } else {
-            initialDelayMillis = intervalMillis;
-        }
-
         if (this.executorService == null) {
             this.executorService = Executors.newScheduledThreadPool(0, runnable -> {
                 final Thread thread = new Thread(runnable);
@@ -162,8 +146,55 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
             });
         }
 
-        final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, initialDelayMillis, intervalMillis, TimeUnit.MILLISECONDS);
+        if (annotation.clock()) {
+            scheduleClock(instance, method, intervalMillis);
+        } else {
+            final Runnable task = () -> {
+                try {
+                    method.invoke(instance);
+                } catch (final Exception e) {
+                    throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
+                }
+            };
 
-        this.scheduledFutureArrayList.add(future);
+            final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, intervalMillis, intervalMillis, TimeUnit.MILLISECONDS);
+
+            this.scheduledFutureArrayList.add(future);
+        }
+    }
+
+    /**
+     * Schedules a clock-aligned task that recalculates its next delay
+     * from wall-clock time after every execution, ensuring each tick
+     * snaps to an exact interval boundary regardless of execution
+     * duration or JVM scheduling jitter.
+     *
+     * @param instance       the component instance
+     * @param method         the annotated method
+     * @param intervalMillis the interval in milliseconds
+     */
+    private void scheduleClock(final Object instance, final Method method, final long intervalMillis) {
+        final Runnable tick = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    method.invoke(instance);
+                } catch (final Exception e) {
+                    throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
+                }
+
+                final long now = System.currentTimeMillis();
+                final long remainder = now % intervalMillis;
+                final long nextDelay = (remainder == 0) ? intervalMillis : (intervalMillis - remainder);
+
+                scheduledFutureArrayList.add(executorService.schedule(this, nextDelay, TimeUnit.MILLISECONDS));
+            }
+        };
+
+        final long now = System.currentTimeMillis();
+        final long remainder = now % intervalMillis;
+        final long initialDelay = (remainder == 0) ? 0 : (intervalMillis - remainder);
+
+        this.scheduledFutureArrayList.add(this.executorService.schedule(tick, initialDelay, TimeUnit.MILLISECONDS));
     }
 }
