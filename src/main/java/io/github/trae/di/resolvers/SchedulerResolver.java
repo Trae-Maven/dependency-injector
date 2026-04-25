@@ -188,6 +188,18 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
         final Runnable tick = new Runnable() {
             @Override
             public void run() {
+                final long target = expected.get();
+                final long diff = target - System.currentTimeMillis();
+
+                if (diff > 0) {
+                    try {
+                        Thread.sleep(diff);
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+
                 try {
                     method.invoke(instance);
                 } catch (final Exception e) {
