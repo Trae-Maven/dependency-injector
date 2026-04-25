@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Discovers {@link Scheduler @Scheduler}-annotated methods on component
@@ -24,11 +25,13 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li><b>Standard</b> ({@code clock = false}) — the task runs at a
  *       fixed rate relative to when {@link #register(Object)} was called.</li>
- *   <li><b>Clock-aligned</b> ({@code clock = true}) — the first execution
- *       is delayed until the next wall-clock boundary that is an exact
- *       multiple of the configured interval (since the epoch), then
- *       repeats at fixed rate thereafter. For example, a 5-minute
- *       interval fires at {@code :00}, {@code :05}, {@code :10}, etc.</li>
+ *   <li><b>Clock-aligned</b> ({@code clock = true}) — executions are
+ *       anchored to wall-clock boundaries that are exact multiples of
+ *       the configured interval (since the epoch). For example, a
+ *       5-minute interval fires at {@code :00}, {@code :05}, {@code :10},
+ *       etc. Each tick is scheduled relative to the ideal boundary,
+ *       preventing cumulative drift from execution duration or JVM
+ *       scheduling jitter.</li>
  * </ul>
  *
  * <p>All scheduled futures are tracked so they can be cancelled
@@ -164,16 +167,21 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
     }
 
     /**
-     * Schedules a clock-aligned task that recalculates its next delay
-     * from wall-clock time after every execution, ensuring each tick
-     * snaps to an exact interval boundary regardless of execution
-     * duration or JVM scheduling jitter.
+     * Schedules a clock-aligned task anchored to ideal wall-clock
+     * boundaries. Each tick is scheduled relative to where it
+     * <i>should</i> have fired (not when it actually ran), so
+     * execution duration and JVM jitter never accumulate drift.
      *
      * @param instance       the component instance
      * @param method         the annotated method
      * @param intervalMillis the interval in milliseconds
      */
     private void scheduleClock(final Object instance, final Method method, final long intervalMillis) {
+        final long now = System.currentTimeMillis();
+        final long remainder = now % intervalMillis;
+        final long initialDelay = (remainder == 0) ? 0 : (intervalMillis - remainder);
+        final AtomicLong expected = new AtomicLong(now + initialDelay);
+
         final Runnable tick = new Runnable() {
             @Override
             public void run() {
@@ -183,17 +191,12 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
                     throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
                 }
 
-                final long now = System.currentTimeMillis();
-                final long remainder = now % intervalMillis;
-                final long nextDelay = (remainder == 0) ? intervalMillis : (intervalMillis - remainder);
+                final long nextExpected = expected.addAndGet(intervalMillis);
+                final long nextDelay = Math.max(0, nextExpected - System.currentTimeMillis());
 
                 scheduledFutureArrayList.add(executorService.schedule(this, nextDelay, TimeUnit.MILLISECONDS));
             }
         };
-
-        final long now = System.currentTimeMillis();
-        final long remainder = now % intervalMillis;
-        final long initialDelay = (remainder == 0) ? 0 : (intervalMillis - remainder);
 
         this.scheduledFutureArrayList.add(this.executorService.schedule(tick, initialDelay, TimeUnit.MILLISECONDS));
     }
