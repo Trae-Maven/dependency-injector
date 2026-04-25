@@ -122,6 +122,30 @@ public class InjectorApi {
     private static final Map<Class<?>, SchedulerResolver> schedulerResolverMap = new LinkedHashMap<>();
 
     /**
+     * Optional executor for dispatching {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = false} onto the platform's main thread
+     * (e.g. Bukkit's {@code runTask}, Hytale's server scheduler).
+     *
+     * <p>If not set, synchronous tasks fall back to running on the
+     * internal scheduler thread pool.</p>
+     */
+    @Getter
+    @Setter
+    private static Consumer<Runnable> synchronousExecutor;
+
+    /**
+     * Optional executor for dispatching {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = true} onto the platform's asynchronous
+     * thread pool (e.g. Bukkit's {@code runTaskAsynchronously}).
+     *
+     * <p>If not set, asynchronous tasks run on the internal scheduler
+     * thread pool.</p>
+     */
+    @Getter
+    @Setter
+    private static Consumer<Runnable> asynchronousExecutor;
+
+    /**
      * Initializes the dependency injection container using only the
      * {@link Application @Application}-annotated class. The class is used
      * for package scanning and dependency resolution but is not registered
@@ -275,7 +299,7 @@ public class InjectorApi {
             invokeAnnotatedMethods(instance, ApplicationReady.class);
         }
 
-        final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer());
+        final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer(), synchronousExecutor, asynchronousExecutor);
 
         for (final Class<?> type : newComponentClassList) {
             final Object instance = getComponentContainer().getInstance(type);
@@ -361,6 +385,8 @@ public class InjectorApi {
             getComponentContainer().clear();
             componentContainer = null;
             configurationResolver = null;
+            synchronousExecutor = null;
+            asynchronousExecutor = null;
         }
     }
 

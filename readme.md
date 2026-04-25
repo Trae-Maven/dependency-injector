@@ -25,7 +25,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 - Priority-based initialization via `@Order`
 - Composable `ComponentComparator` extension point for external sorting logic
 - Reverse-order shutdown — components are destroyed in the opposite order they were initialized
-- Scheduled tasks via `@Scheduler` with fixed-rate and clock-aligned modes
+- Scheduled tasks via `@Scheduler` with fixed-rate, clock-aligned, synchronous/asynchronous modes and platform executor hooks
 - Lifecycle callbacks: `@PostConstruct`, `@ApplicationReady`, `@PreDestroy`, `@PostDestroy`
 - Circular dependency detection at both annotation and runtime level
 - Lightweight dependency container with assignable-type lookups
@@ -479,29 +479,98 @@ Use `@Scheduler` to mark a no-argument method as a repeating task. The method is
 @Component
 public class MetricsService {
 
-    @Scheduler(delay = 30, unit = TimeUnit.SECONDS)
+    @Scheduler(period = 30, unit = TimeUnit.SECONDS)
     public void flushMetrics() {
         // fires every 30 seconds from application start
     }
 }
 ```
 
+#### Initial Delay
+
+Use `initialDelay` to control how long the task waits before its first execution. If not set, it defaults to `period` — so the first tick fires one full interval after registration:
+
+```java
+@Scheduler(initialDelay = 5, period = 30, unit = TimeUnit.SECONDS)
+public void warmCache() {
+    // waits 5 seconds, then fires every 30 seconds
+}
+```
+
 #### Clock-Aligned Mode
 
-Set `clock = true` to align executions to wall-clock boundaries that are multiples of the interval. The first execution is delayed until the next aligned boundary, then repeats at fixed rate.
+Set `clock = true` to align executions to wall-clock boundaries that are multiples of the period. The first execution is delayed until the next aligned boundary, then repeats at fixed rate. `initialDelay` is ignored in this mode.
 
-For example, a 5-minute interval fires at `:00`, `:05`, `:10`, `:15`, etc. regardless of when the application started:
+For example, a 5-minute period fires at `:00`, `:05`, `:10`, `:15`, etc. regardless of when the application started:
 
 ```java
 @Component
 public class SnapshotService {
 
-    @Scheduler(delay = 5, unit = TimeUnit.MINUTES, clock = true)
+    @Scheduler(period = 5, unit = TimeUnit.MINUTES, clock = true)
     public void takeSnapshot() {
         // fires at :00, :05, :10, :15, etc.
     }
 }
 ```
+
+#### Asynchronous Mode
+
+By default, scheduled tasks are dispatched through the synchronous executor (e.g. the game thread). Set `asynchronous = true` to dispatch through the asynchronous executor instead. If no platform executors are set, both modes run on the internal scheduler thread pool:
+
+```java
+@Component
+public class AnalyticsService {
+
+    // Runs on the platform's main thread (default)
+    @Scheduler(period = 5, unit = TimeUnit.SECONDS)
+    public void updateScoreboard() {
+        // ...
+    }
+
+    // Runs on the platform's asynchronous thread pool
+    @Scheduler(period = 30, unit = TimeUnit.SECONDS, asynchronous = true)
+    public void flushAnalytics() {
+        // ...
+    }
+
+    // Clock-aligned, runs on the platform's main thread
+    @Scheduler(period = 1, unit = TimeUnit.MINUTES, clock = true)
+    public void synchronousLeaderboard() {
+        // ...
+    }
+
+    // Clock-aligned, runs on the platform's asynchronous thread pool
+    @Scheduler(period = 1, unit = TimeUnit.MINUTES, clock = true, asynchronous = true)
+    public void pushMetrics() {
+        // ...
+    }
+}
+```
+
+#### Platform Executors
+
+Use `InjectorApi.setSynchronousExecutor(...)` and `InjectorApi.setAsynchronousExecutor(...)` to hook into the platform's threading model. Set these before `initialize()`:
+
+```java
+@Application
+public class CorePlugin extends JavaPlugin {
+
+    @Override
+    public void onEnable() {
+        InjectorApi.setSynchronousExecutor(runnable -> Bukkit.getScheduler().runTask(this, runnable));
+        InjectorApi.setAsynchronousExecutor(runnable -> Bukkit.getScheduler().runTaskAsynchronously(this, runnable));
+        InjectorApi.initialize(this);
+    }
+
+    @Override
+    public void onDisable() {
+        InjectorApi.shutdown(this);
+    }
+}
+```
+
+If neither executor is set, all tasks run on the internal `di-scheduler` daemon thread pool — no platform integration required. This makes the framework usable outside game platforms (e.g. standalone Spring Boot applications) without setting either hook.
 
 A single component can have multiple scheduled methods with different intervals and modes:
 
@@ -509,12 +578,12 @@ A single component can have multiple scheduled methods with different intervals 
 @Component
 public class MonitoringService {
 
-    @Scheduler(delay = 10, unit = TimeUnit.SECONDS)
+    @Scheduler(period = 10, unit = TimeUnit.SECONDS)
     public void pollHealth() {
         // fixed-rate from application start
     }
 
-    @Scheduler(delay = 1, unit = TimeUnit.MINUTES, clock = true)
+    @Scheduler(period = 1, unit = TimeUnit.MINUTES, clock = true)
     public void reportMetrics() {
         // clock-aligned to the start of each minute
     }
@@ -554,4 +623,4 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 | `@ApplicationReady` | Method | Invoked after the container is fully wired |
 | `@PreDestroy` | Method | Invoked during shutdown, container is still available |
 | `@PostDestroy` | Method | Invoked during shutdown, container has been destroyed |
-| `@Scheduler` | Method | Repeating scheduled task with fixed-rate or clock-aligned mode |
+| `@Scheduler` | Method | Repeating scheduled task with fixed-rate, clock-aligned, and synchronous/asynchronous modes |

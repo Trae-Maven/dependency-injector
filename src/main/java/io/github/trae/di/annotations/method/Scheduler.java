@@ -94,4 +94,14 @@ public @interface Scheduler {
      * @return {@code true} for clock-aligned scheduling
      */
     boolean clock() default false;
+
+    /**
+     * When {@code true}, the task runs on the scheduler thread pool.
+     * When {@code false} (the default), the task runs on the calling
+     * thread that triggered registration — i.e. synchronously on the
+     * main thread.
+     *
+     * @return {@code true} for asynchronous execution
+     */
+    boolean asynchronous() default false;
 }

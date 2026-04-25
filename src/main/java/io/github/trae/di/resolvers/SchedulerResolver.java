@@ -15,6 +15,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * Discovers {@link Scheduler @Scheduler}-annotated methods on component
@@ -34,6 +35,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *       scheduling jitter. {@code initialDelay} is ignored.</li>
  * </ul>
  *
+ * <p>Task execution can be dispatched through platform-provided
+ * executors via {@code synchronousExecutor} and {@code asynchronousExecutor}.
+ * When {@code asynchronous = false} (the default), the task is dispatched
+ * through the synchronous executor (e.g. the game thread). When
+ * {@code asynchronous = true}, it is dispatched through the asynchronous
+ * executor (e.g. the platform's asynchronous scheduler). If no executor
+ * is set for the requested mode, the task runs directly on the internal
+ * scheduler thread pool.</p>
+ *
  * <p>All scheduled futures are tracked so they can be cancelled
  * cleanly during {@link #shutdown()}.</p>
  */
@@ -41,18 +51,38 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
 
     private final List<ScheduledFuture<?>> scheduledFutureArrayList = new ArrayList<>();
 
+    /**
+     * Optional executor for dispatching tasks with {@code asynchronous = false}
+     * onto the platform's main thread. If {@code null}, synchronous
+     * tasks run directly on the internal scheduler thread pool.
+     */
+    private final Consumer<Runnable> synchronousExecutor;
+
+    /**
+     * Optional executor for dispatching tasks with {@code asynchronous = true}
+     * onto the platform's asynchronous thread pool. If {@code null},
+     * asynchronous tasks run directly on the internal scheduler thread pool.
+     */
+    private final Consumer<Runnable> asynchronousExecutor;
+
     private ScheduledExecutorService executorService;
 
     /**
-     * Creates a new resolver. The backing {@link ScheduledExecutorService}
-     * is not created until the first {@link Scheduler @Scheduler}-annotated
-     * method is discovered, avoiding unnecessary thread allocation when
-     * an application has no scheduled tasks.
+     * Creates a new resolver with optional platform executors. The
+     * backing {@link ScheduledExecutorService} is not created until
+     * the first {@link Scheduler @Scheduler}-annotated method is
+     * discovered, avoiding unnecessary thread allocation when an
+     * application has no scheduled tasks.
      *
-     * @param componentContainer the shared component container
+     * @param componentContainer   the shared component container
+     * @param synchronousExecutor  executor for synchronous tasks, or {@code null}
+     * @param asynchronousExecutor executor for asynchronous tasks, or {@code null}
      */
-    public SchedulerResolver(final ComponentContainer componentContainer) {
+    public SchedulerResolver(final ComponentContainer componentContainer, final Consumer<Runnable> synchronousExecutor, final Consumer<Runnable> asynchronousExecutor) {
         super(componentContainer);
+
+        this.synchronousExecutor = synchronousExecutor;
+        this.asynchronousExecutor = asynchronousExecutor;
     }
 
     /**
@@ -149,19 +179,11 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
         }
 
         if (annotation.clock()) {
-            scheduleClock(instance, method, periodMillis);
+            scheduleClock(instance, method, annotation.asynchronous(), periodMillis);
         } else {
-            final long initialDelayMillis = annotation.initialDelay() > 0
-                    ? annotation.unit().toMillis(annotation.initialDelay())
-                    : periodMillis;
+            final long initialDelayMillis = annotation.initialDelay() > 0 ? annotation.unit().toMillis(annotation.initialDelay()) : periodMillis;
 
-            final Runnable task = () -> {
-                try {
-                    method.invoke(instance);
-                } catch (final Exception e) {
-                    throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
-                }
-            };
+            final Runnable task = wrapTask(instance, method, annotation.asynchronous());
 
             final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, initialDelayMillis, periodMillis, TimeUnit.MILLISECONDS);
 
@@ -177,9 +199,11 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      *
      * @param instance     the component instance
      * @param method       the annotated method
+     * @param asynchronous whether the task should be dispatched through
+     *                     the asynchronous executor
      * @param periodMillis the period in milliseconds
      */
-    private void scheduleClock(final Object instance, final Method method, final long periodMillis) {
+    private void scheduleClock(final Object instance, final Method method, final boolean asynchronous, final long periodMillis) {
         final long now = System.currentTimeMillis();
         final long remainder = now % periodMillis;
         final long initialDelay = (remainder == 0) ? 0 : (periodMillis - remainder);
@@ -200,11 +224,7 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
                     }
                 }
 
-                try {
-                    method.invoke(instance);
-                } catch (final Exception e) {
-                    throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
-                }
+                wrapTask(instance, method, asynchronous).run();
 
                 final long nextExpected = expected.addAndGet(periodMillis);
                 final long nextDelay = Math.max(0, nextExpected - System.currentTimeMillis());
@@ -214,5 +234,44 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
         };
 
         this.scheduledFutureArrayList.add(this.executorService.schedule(tick, initialDelay, TimeUnit.MILLISECONDS));
+    }
+
+    /**
+     * Wraps a method invocation with platform executor dispatch.
+     * If {@code asynchronous} is {@code true} and an asynchronous
+     * executor is set, the invocation is dispatched through it. If
+     * {@code asynchronous} is {@code false} and a synchronous executor
+     * is set, the invocation is dispatched through that. Otherwise the
+     * invocation runs directly on the current thread.
+     *
+     * @param instance     the component instance
+     * @param method       the annotated method
+     * @param asynchronous whether to use the asynchronous or synchronous executor
+     * @return a runnable that dispatches the method invocation
+     */
+    private Runnable wrapTask(final Object instance, final Method method, final boolean asynchronous) {
+        final Runnable invocation = () -> {
+            try {
+                method.invoke(instance);
+            } catch (final Exception e) {
+                throw new InjectorException("Failed to invoke @%s method: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()), e);
+            }
+        };
+
+        return () -> {
+            if (asynchronous) {
+                if (this.asynchronousExecutor != null) {
+                    this.asynchronousExecutor.accept(invocation);
+                } else {
+                    invocation.run();
+                }
+            } else {
+                if (this.synchronousExecutor != null) {
+                    this.synchronousExecutor.accept(invocation);
+                } else {
+                    invocation.run();
+                }
+            }
+        };
     }
 }
