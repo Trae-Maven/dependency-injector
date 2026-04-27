@@ -1,6 +1,8 @@
 package io.github.trae.di.resolvers.interfaces;
 
+import java.nio.file.Path;
+
 public interface IConfigurationResolver {
 
-    Object resolve(final Class<?> type);
+    void resolve(final Class<?> type, final Path configurationDirectory);
 }

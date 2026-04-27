@@ -279,9 +279,8 @@ public class InjectorApi {
             initializedApplicationSet.add(applicationClass);
         }
 
-        final Path configDirectory = configurationDirectoryMap.get(rootClass);
-        if (configurationResolver == null && configDirectory != null) {
-            configurationResolver = new ConfigurationResolver(getComponentContainer(), configDirectory);
+        if (configurationResolver == null) {
+            configurationResolver = new ConfigurationResolver(getComponentContainer());
         }
 
         final ConstructorResolver constructorResolver = new ConstructorResolver(getComponentContainer());
@@ -295,10 +294,13 @@ public class InjectorApi {
             }
 
             if (type.isAnnotationPresent(Configuration.class)) {
-                if (configurationResolver == null) {
-                    throw new InjectorException("Configuration directory not set. Call InjectorApi.setConfigurationDirectory() before initialize().");
+                final Path configDir = resolveConfigurationDirectory(type);
+
+                if (configDir == null) {
+                    throw new InjectorException("Configuration directory not set for component: %s. Call InjectorApi.setConfigurationDirectory() before initialize().".formatted(type.getName()));
                 }
-                configurationResolver.resolve(type);
+
+                configurationResolver.resolve(type, configDir);
             }
         }
 
@@ -406,6 +408,7 @@ public class InjectorApi {
 
         applicationComponentMap.remove(rootClass);
         initializedApplicationSet.remove(rootClass);
+        configurationDirectoryMap.remove(rootClass);
 
         getComponentContainer().buildCache();
 
@@ -417,6 +420,7 @@ public class InjectorApi {
             getComponentContainer().clear();
             componentContainer = null;
             configurationResolver = null;
+            configurationDirectoryMap.clear();
             synchronousExecutor = null;
             asynchronousExecutor = null;
         }
@@ -659,6 +663,25 @@ public class InjectorApi {
 
         visiting.remove(applicationClass);
         resolved.add(applicationClass);
+    }
+
+    /**
+     * Resolves the configuration directory for the given component class
+     * by finding which {@link Application @Application} registered it
+     * and returning that application's configuration directory.
+     *
+     * @param componentClass the component class to look up
+     * @return the configuration directory for the owning application,
+     * or {@code null} if no directory is registered
+     */
+    private static Path resolveConfigurationDirectory(final Class<?> componentClass) {
+        for (final Map.Entry<Class<?>, List<Class<?>>> entry : applicationComponentMap.entrySet()) {
+            if (entry.getValue().contains(componentClass)) {
+                return configurationDirectoryMap.get(entry.getKey());
+            }
+        }
+
+        return null;
     }
 
     /**

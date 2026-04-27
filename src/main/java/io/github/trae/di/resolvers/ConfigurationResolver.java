@@ -32,6 +32,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link ConfigSerializer} instance per {@link ConfigType} handles all
  * serialization and deserialization.</p>
  *
+ * <p>The configuration directory is provided per-resolve call rather than
+ * at construction time, allowing each {@link io.github.trae.di.annotations.type.Application @Application}
+ * to store its configuration files in its own directory.</p>
+ *
  * <p>Configuration classes are plain POJOs — no base class required. The
  * resolver tracks the file path and serializer for each registered
  * configuration. Since the same object reference is retained in the DI
@@ -49,8 +53,6 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
         SERIALIZER_MAP.put(ConfigType.YAML, new YamlConfigSerializer());
     }
 
-    private final Path configurationDirectory;
-
     /**
      * Maps each registered configuration class to its resolved file path.
      */
@@ -64,17 +66,10 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
     /**
      * Creates a new {@link ConfigurationResolver}.
      *
-     * @param componentContainer     the DI container to register instances into
-     * @param configurationDirectory the directory where config files are stored
+     * @param componentContainer the DI container to register instances into
      */
-    public ConfigurationResolver(final ComponentContainer componentContainer, final Path configurationDirectory) {
+    public ConfigurationResolver(final ComponentContainer componentContainer) {
         super(componentContainer);
-
-        if (configurationDirectory == null) {
-            throw new IllegalArgumentException("Configuration Directory cannot be null.");
-        }
-
-        this.configurationDirectory = configurationDirectory;
     }
 
     /**
@@ -94,14 +89,18 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
      * No base class is required — any POJO works. The file format and extension
      * are determined by {@link Configuration#type()}.</p>
      *
-     * @param type the {@code @Configuration}-annotated class
-     * @return the loaded or default instance
+     * @param type                   the {@code @Configuration}-annotated class
+     * @param configurationDirectory the directory where the config file is stored
      * @throws InjectorException if the class is not annotated, or loading/saving fails
      */
     @Override
-    public Object resolve(final Class<?> type) {
+    public void resolve(final Class<?> type, final Path configurationDirectory) {
         if (type == null) {
             throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (configurationDirectory == null) {
+            throw new IllegalArgumentException("Configuration Directory cannot be null.");
         }
 
         final Configuration configuration = type.getAnnotation(Configuration.class);
@@ -110,7 +109,7 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
         }
 
         final ConfigType configType = configuration.type();
-        final Path filePath = this.configurationDirectory.resolve(configuration.value() + configType.getExtension());
+        final Path filePath = configurationDirectory.resolve(configuration.value() + configType.getExtension());
         final ConfigSerializer serializer = getSerializer(configType);
 
         final Object instance = load(type, filePath, serializer);
@@ -119,7 +118,6 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
         this.configTypeMap.put(type, configType);
         this.getComponentContainer().registerInstance(type, instance);
 
-        return instance;
     }
 
     /**
