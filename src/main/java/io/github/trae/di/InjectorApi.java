@@ -101,13 +101,14 @@ public class InjectorApi {
     private static ComponentContainer componentContainer;
 
     /**
-     * The base directory for {@link Configuration @Configuration} files.
-     * Must be set via {@link #setConfigurationDirectory(Path)} before
-     * {@link #initialize(Class)} if any configuration classes are used.
+     * Maps each {@link Application @Application}-annotated class to its
+     * configuration directory. Set via
+     * {@link #setConfigurationDirectory(Class, Path)} before
+     * {@link #initialize(Class)} so that each application's
+     * {@link Configuration @Configuration} files are resolved from
+     * the correct directory.
      */
-    @Getter
-    @Setter
-    private static Path configurationDirectory;
+    private static final Map<Class<?>, Path> configurationDirectoryMap = new LinkedHashMap<>();
 
     /**
      * The shared configuration resolver, created during initialization if
@@ -147,6 +148,33 @@ public class InjectorApi {
     @Getter
     @Setter
     private static Consumer<Runnable> asynchronousExecutor;
+
+    /**
+     * Registers a configuration directory for the given
+     * {@link Application @Application}-annotated class. Must be called
+     * before {@link #initialize(Class)} so that any
+     * {@link Configuration @Configuration} classes discovered during
+     * that application's initialization are resolved from the correct
+     * directory.
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     * @param path             the directory where config files are stored
+     */
+    public static void setConfigurationDirectory(final Class<?> applicationClass, final Path path) {
+        configurationDirectoryMap.put(applicationClass, path);
+    }
+
+    /**
+     * Returns the configuration directory registered for the given
+     * {@link Application @Application}-annotated class, or {@code null}
+     * if none has been set.
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     * @return the configuration directory, or {@code null}
+     */
+    public static Path getConfigurationDirectory(final Class<?> applicationClass) {
+        return configurationDirectoryMap.get(applicationClass);
+    }
 
     /**
      * Initializes the dependency injection container using only the
@@ -251,8 +279,9 @@ public class InjectorApi {
             initializedApplicationSet.add(applicationClass);
         }
 
-        if (configurationResolver == null && configurationDirectory != null) {
-            configurationResolver = new ConfigurationResolver(getComponentContainer(), configurationDirectory);
+        final Path configDirectory = configurationDirectoryMap.get(rootClass);
+        if (configurationResolver == null && configDirectory != null) {
+            configurationResolver = new ConfigurationResolver(getComponentContainer(), configDirectory);
         }
 
         final ConstructorResolver constructorResolver = new ConstructorResolver(getComponentContainer());
