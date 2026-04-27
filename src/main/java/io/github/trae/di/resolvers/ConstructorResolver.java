@@ -4,7 +4,6 @@ import io.github.trae.di.containers.ComponentContainer;
 import io.github.trae.di.exceptions.DependencyException;
 import io.github.trae.di.resolvers.abstracts.AbstractResolver;
 import io.github.trae.di.resolvers.interfaces.IConstructorResolver;
-import io.github.trae.utilities.UtilClass;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Parameter;
@@ -81,7 +80,9 @@ public class ConstructorResolver extends AbstractResolver implements IConstructo
                 }
             }
 
-            final Object instance = UtilClass.create(type, args);
+            constructor.setAccessible(true);
+
+            final Object instance = constructor.newInstance(args);
 
             this.getComponentContainer().registerInstance(type, instance);
 

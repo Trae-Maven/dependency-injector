@@ -46,7 +46,10 @@ import java.util.function.Consumer;
  *       in each application's package and validates they are concrete types.
  *       Applications already initialized are skipped. Components annotated
  *       with {@link SoftDependency @SoftDependency} are skipped if any of
- *       their required packages are not present on the runtime classpath.</li>
+ *       their required packages are not present on the runtime classpath.
+ *       Custom stereotype annotations meta-annotated with {@code @Component},
+ *       {@code @Service}, or {@code @Configuration} are automatically
+ *       discovered without any additional registration.</li>
  *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
  *       constraints, then {@link Order @Order} priority, then any registered
  *       {@link io.github.trae.di.sorters.comparators.ComponentComparator ComponentComparators}.</li>
@@ -630,9 +633,45 @@ public class InjectorApi {
     }
 
     /**
+     * Checks whether the given type is annotated — directly or via a
+     * meta-annotation — with any annotation in {@link #ANNOTATION_CLASS_LIST}.
+     *
+     * <p>This walks one level of meta-annotation depth: for each annotation
+     * present on the type, its own annotations are checked against the
+     * known component annotations. This allows custom stereotype annotations
+     * such as {@code @Repository} (which is meta-annotated with
+     * {@code @Component}) to be automatically discovered without registering
+     * them in the framework.</p>
+     *
+     * @param type the class to check
+     * @return {@code true} if the type is a component (directly or via meta-annotation)
+     */
+    private static boolean isComponentAnnotated(final Class<?> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        for (final Class<? extends Annotation> annotationClass : ANNOTATION_CLASS_LIST) {
+            if (type.isAnnotationPresent(annotationClass)) {
+                return true;
+            }
+        }
+
+        for (final Annotation annotation : type.getAnnotations()) {
+            for (final Class<? extends Annotation> annotationClass : ANNOTATION_CLASS_LIST) {
+                if (annotation.annotationType().isAnnotationPresent(annotationClass)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Resolves the annotation name for error messages by checking which
      * annotation from {@link #ANNOTATION_CLASS_LIST} is present on the
-     * given type.
+     * given type, including meta-annotations one level deep.
      *
      * @param type the class to check
      * @return the simple name of the matched annotation
@@ -645,21 +684,55 @@ public class InjectorApi {
             }
         }
 
+        for (final Annotation annotation : type.getAnnotations()) {
+            for (final Class<? extends Annotation> annotationClass : ANNOTATION_CLASS_LIST) {
+                if (annotation.annotationType().isAnnotationPresent(annotationClass)) {
+                    return annotation.annotationType().getSimpleName();
+                }
+            }
+        }
+
         throw new DependencyException("Could not resolve annotation type for %s".formatted(type.getName()));
     }
 
     /**
-     * Scans the given package for {@link Component @Component}-annotated
-     * classes, including meta-annotations such as {@code @Service}
-     * and validates that each is a concrete type.
-     * Interfaces, abstract classes, enums, records, and annotations are
-     * rejected. Components annotated with {@link SoftDependency @SoftDependency}
-     * are skipped if any of their required packages are not found on the
-     * runtime classpath.
+     * Scans the given package for classes annotated with any known component
+     * annotation — either directly ({@link Component @Component},
+     * {@link Service @Service}, {@link Configuration @Configuration}) or via
+     * a meta-annotation (e.g. {@code @Repository} which is itself annotated
+     * with {@code @Component}).
+     *
+     * <p>Discovery is performed in two passes:</p>
+     * <ol>
+     *   <li><b>Direct annotations</b> — uses
+     *       {@link Reflections#getTypesAnnotatedWith(Class, boolean)} for each
+     *       annotation in {@link #ANNOTATION_CLASS_LIST}. This catches all
+     *       classes directly annotated with {@code @Component},
+     *       {@code @Service}, or {@code @Configuration}.</li>
+     *   <li><b>Meta-annotations</b> — iterates the raw
+     *       {@link Scanners#TypesAnnotated} store values to retrieve every
+     *       annotated class name indexed within the scanned package. Each
+     *       class is loaded using the classloader from a class already
+     *       resolved by pass 1 (so that isolated plugin classloaders are
+     *       honoured), and checked via {@link #isComponentAnnotated(Class)}
+     *       which walks one level of meta-annotation depth. This catches
+     *       classes annotated with custom stereotype annotations (e.g.
+     *       {@code @Repository}) whose annotation type lives <em>outside</em>
+     *       the scanned package but is itself meta-annotated with a known
+     *       component annotation. Classes already discovered by pass 1 are
+     *       skipped.</li>
+     * </ol>
+     *
+     * <p>Only concrete classes are accepted — interfaces, abstract classes,
+     * enums, records, and annotations are silently skipped or rejected.
+     * Components annotated with {@link SoftDependency @SoftDependency} are
+     * skipped if any of their required packages are not found on the runtime
+     * classpath.</p>
      *
      * @param basePackage the package to scan
      * @return an unmodifiable, deduplicated list of valid component classes
-     * @throws InjectorException if a non-concrete type is annotated
+     * @throws InjectorException if a non-concrete type is annotated with a
+     *                           component annotation
      */
     private static List<Class<?>> scanComponents(final String basePackage) {
         if (basePackage == null) {
@@ -668,14 +741,48 @@ public class InjectorApi {
 
         final Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
 
-        final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), list -> {
+        final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), set -> {
+            // Pass 1 — direct annotations (original proven behavior)
             for (final Class<? extends Annotation> clazz : ANNOTATION_CLASS_LIST) {
-                list.addAll(reflections.getTypesAnnotatedWith(clazz, true));
+                set.addAll(reflections.getTypesAnnotatedWith(clazz, false));
+            }
+
+            // Resolve the classloader from a class already loaded by pass 1,
+            // falling back to the context classloader if pass 1 found nothing.
+            // This ensures classes in isolated plugin classloaders can be loaded.
+            final ClassLoader classLoader = set.isEmpty()
+                    ? Thread.currentThread().getContextClassLoader()
+                    : set.iterator().next().getClassLoader();
+
+            // Pass 2 — meta-annotations: iterate the raw TypesAnnotated store
+            // values (annotated class names) and check if any carry a
+            // meta-annotated stereotype (e.g. @Repository -> @Component).
+            final Map<String, Set<String>> store = reflections.getStore().getOrDefault(Scanners.TypesAnnotated.index(), Collections.emptyMap());
+
+            for (final Set<String> classNameSet : store.values()) {
+                for (final String className : classNameSet) {
+                    if (set.stream().anyMatch(c -> c.getName().equals(className))) {
+                        continue;
+                    }
+
+                    try {
+                        final Class<?> clazz = Class.forName(className, false, classLoader);
+
+                        if (isComponentAnnotated(clazz)) {
+                            set.add(clazz);
+                        }
+                    } catch (final ClassNotFoundException ignored) {
+                    }
+                }
             }
         });
 
         return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
             for (final Class<?> type : componentClassSet) {
+                if (!(isComponentAnnotated(type))) {
+                    continue;
+                }
+
                 if (type.isInterface()) {
                     throw new InjectorException("@%s cannot be applied to interfaces: %s".formatted(resolveAnnotationName(type), type.getName()));
                 }
@@ -693,7 +800,7 @@ public class InjectorApi {
                 }
 
                 if (type.isAnnotation()) {
-                    throw new InjectorException("@%s cannot be applied to annotations: %s".formatted(resolveAnnotationName(type), type.getName()));
+                    continue;
                 }
 
                 if (type.isAnnotationPresent(SoftDependency.class)) {
