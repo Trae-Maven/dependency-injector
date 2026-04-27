@@ -670,7 +670,7 @@ public class InjectorApi {
 
         final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), list -> {
             for (final Class<? extends Annotation> clazz : ANNOTATION_CLASS_LIST) {
-                list.addAll(reflections.getTypesAnnotatedWith(clazz, false));
+                list.addAll(reflections.getTypesAnnotatedWith(clazz, true));
             }
         });
 
