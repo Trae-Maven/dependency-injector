@@ -21,6 +21,10 @@ import java.util.Set;
  * via the {@link ConstructorResolver}. Collection dependencies are
  * resolved by extracting the generic element type and gathering all
  * assignable instances into a {@link List} or {@link Set}.</p>
+ *
+ * <p>Assignable-type resolution checks both already-built instances and
+ * unbuilt component classes directly against the instance map, bypassing
+ * the assignable cache to avoid stale empty results during initialization.</p>
  */
 public class DependencyResolver extends AbstractResolver implements IDependencyResolver {
 
@@ -42,9 +46,9 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
 
     /**
      * Resolves a single dependency by type. Checks for an exact match
-     * first, then falls back to an assignable-type lookup. If the
-     * dependency is a registered component class that has not yet been
-     * instantiated, it is constructed on demand.
+     * first, then scans the component class list for assignable types,
+     * handling both already-built and unbuilt components directly to
+     * avoid stale assignable cache results during initialization.
      *
      * @param type the dependency type to resolve
      * @return the resolved instance
@@ -66,18 +70,17 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
             }
         }
 
-        final List<?> assignableInstanceList = this.getComponentContainer().getAssignableInstanceList(type);
-
-        if (!(assignableInstanceList.isEmpty())) {
-            return assignableInstanceList.getFirst();
-        }
-
-        // Attempt lazy construction for assignable types (interfaces/superclasses)
+        // Attempt resolution by assignable type — check both built and unbuilt components
+        // directly against the component class list to avoid stale assignable cache entries
         if (this.constructorResolver != null) {
             for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {
-                if (type.isAssignableFrom(componentClass) && !(this.getComponentContainer().isInstance(componentClass))) {
-                    this.constructorResolver.create(componentClass);
-                    return this.getComponentContainer().getInstance(componentClass);
+                if (type.isAssignableFrom(componentClass)) {
+                    if (this.getComponentContainer().isInstance(componentClass)) {
+                        return this.getComponentContainer().getInstance(componentClass);
+                    } else {
+                        this.constructorResolver.create(componentClass);
+                        return this.getComponentContainer().getInstance(componentClass);
+                    }
                 }
             }
         }

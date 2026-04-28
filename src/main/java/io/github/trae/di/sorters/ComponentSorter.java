@@ -5,6 +5,7 @@ import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.exceptions.DependencyException;
 import io.github.trae.di.sorters.comparators.ComponentComparator;
 
+import java.lang.reflect.Modifier;
 import java.util.*;
 
 /**
@@ -117,7 +118,10 @@ public class ComponentSorter {
                 }
 
                 if (resolved == null) {
-                    throw new DependencyException("@%s references unresolvable dependency: %s -> %s".formatted(DependsOn.class.getSimpleName(), type.getName(), dependency.getName()));
+                    if (dependency != null && !(dependency.isInterface()) && !(Modifier.isAbstract(dependency.getModifiers()))) {
+                        throw new DependencyException("@%s references unresolvable dependency: %s -> %s".formatted(DependsOn.class.getSimpleName(), type.getName(), dependency.getName()));
+                    }
+                    continue;
                 }
 
                 dependencyMap.computeIfAbsent(type, k -> new HashSet<>()).add(resolved);
