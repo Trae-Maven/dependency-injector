@@ -83,10 +83,14 @@ public class ComponentSorter {
      * built from {@link DependsOn} annotations. Dependencies are placed
      * before the components that declare them.
      *
+     * <p>Supports interface and superclass references in {@code @DependsOn} —
+     * if the declared dependency is an interface or abstract class, it resolves
+     * to the first registered component that implements or extends it.</p>
+     *
      * @param componentClassList the full list of component classes
      * @return a new list in dependency-safe order
-     * @throws DependencyException if a referenced dependency is not a
-     *                             registered component or a cycle is found
+     * @throws DependencyException if a referenced dependency cannot be resolved
+     *                             to any registered component or a cycle is found
      */
     private static List<Class<?>> topologicalSort(final List<Class<?>> componentClassList) {
         final Set<Class<?>> componentSet = new HashSet<>(componentClassList);
@@ -99,11 +103,24 @@ public class ComponentSorter {
             }
 
             for (final Class<?> dependency : type.getAnnotation(DependsOn.class).values()) {
-                if (!(componentSet.contains(dependency))) {
-                    throw new DependencyException("@%s references unregistered component: %s -> %s".formatted(DependsOn.class.getSimpleName(), type.getName(), dependency.getName()));
+                Class<?> resolved = null;
+
+                if (componentSet.contains(dependency)) {
+                    resolved = dependency;
+                } else {
+                    for (final Class<?> candidate : componentSet) {
+                        if (dependency.isAssignableFrom(candidate)) {
+                            resolved = candidate;
+                            break;
+                        }
+                    }
                 }
 
-                dependencyMap.computeIfAbsent(type, k -> new HashSet<>()).add(dependency);
+                if (resolved == null) {
+                    throw new DependencyException("@%s references unresolvable dependency: %s -> %s".formatted(DependsOn.class.getSimpleName(), type.getName(), dependency.getName()));
+                }
+
+                dependencyMap.computeIfAbsent(type, k -> new HashSet<>()).add(resolved);
             }
         }
 
