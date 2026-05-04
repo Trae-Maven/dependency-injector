@@ -489,6 +489,52 @@ public class InjectorApi {
     }
 
     /**
+     * Returns all registered {@link Configuration @Configuration} classes
+     * across all initialized applications.
+     *
+     * @return an unmodifiable list of all configuration classes
+     * @throws InjectorException if the configuration resolver has not
+     *                           been initialized
+     */
+    public static List<Class<?>> getConfigurationsClasses() {
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        return configurationDirectoryMap.keySet().stream().toList();
+    }
+
+    /**
+     * Returns all {@link Configuration @Configuration} classes belonging
+     * to the specified {@link Application @Application}.
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     *                         whose configurations should be returned
+     * @return an unmodifiable list of configuration classes for that
+     * application
+     * @throws InjectorException if the class is not annotated with
+     *                           {@code @Application}, or the configuration
+     *                           resolver has not been initialized
+     */
+    public static List<Class<?>> getConfigurationsClasses(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
+
+        return componentClassList.stream().filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
+    }
+
+    /**
      * Reloads a single {@link Configuration @Configuration} from disk.
      * The existing instance in the container is updated in-place, so any
      * component holding a reference will see the new values immediately.
