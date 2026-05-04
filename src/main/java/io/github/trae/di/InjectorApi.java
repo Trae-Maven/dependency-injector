@@ -161,6 +161,18 @@ public class InjectorApi {
      * @param path             the directory where config files are stored
      */
     public static void setConfigurationDirectory(final Class<?> applicationClass, final Path path) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (path == null) {
+            throw new IllegalArgumentException("Path cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
         configurationDirectoryMap.put(applicationClass, path);
     }
 
@@ -173,6 +185,14 @@ public class InjectorApi {
      * @return the configuration directory, or {@code null}
      */
     public static Path getConfigurationDirectory(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
         return configurationDirectoryMap.get(applicationClass);
     }
 
@@ -235,6 +255,10 @@ public class InjectorApi {
      * @param rootInstance the application instance to register, or {@code null}
      */
     private static void initialize(final Class<?> rootClass, final Object rootInstance) {
+        if (rootClass == null) {
+            throw new IllegalArgumentException("Root Class cannot be null.");
+        }
+
         if (!(rootClass.isAnnotationPresent(Application.class))) {
             throw new InjectorException("Root Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), rootClass.getName()));
         }
@@ -489,6 +513,41 @@ public class InjectorApi {
         }
 
         configurationResolver.reload(type);
+    }
+
+    /**
+     * Reloads all {@link Configuration @Configuration} instances belonging
+     * to the specified {@link Application @Application} from disk.
+     *
+     * <p>Each existing instance is updated in-place, so any component
+     * holding a reference will see the new values immediately.</p>
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     *                         whose configurations should be reloaded
+     * @throws InjectorException if the class is not annotated with
+     *                           {@code @Application}, or the configuration
+     *                           resolver has not been initialized
+     */
+    public static void reloadConfigurations(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        if (configurationResolver == null) {
+            throw new InjectorException("Configuration resolver has not been initialized.");
+        }
+
+        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
+
+        for (final Class<?> type : componentClassList) {
+            if (type.isAnnotationPresent(Configuration.class)) {
+                configurationResolver.reload(type);
+            }
+        }
     }
 
     /**
