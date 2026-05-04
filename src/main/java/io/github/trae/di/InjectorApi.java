@@ -501,7 +501,7 @@ public class InjectorApi {
             throw new InjectorException("Configuration resolver has not been initialized.");
         }
 
-        return configurationDirectoryMap.keySet().stream().toList();
+        return applicationComponentMap.values().stream().flatMap(List::stream).filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
     }
 
     /**
