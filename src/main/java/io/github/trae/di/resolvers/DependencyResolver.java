@@ -75,12 +75,10 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
         if (this.constructorResolver != null) {
             for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {
                 if (type.isAssignableFrom(componentClass)) {
-                    if (this.getComponentContainer().isInstance(componentClass)) {
-                        return this.getComponentContainer().getInstance(componentClass);
-                    } else {
+                    if (!(this.getComponentContainer().isInstance(componentClass))) {
                         this.constructorResolver.create(componentClass);
-                        return this.getComponentContainer().getInstance(componentClass);
                     }
+                    return this.getComponentContainer().getInstance(componentClass);
                 }
             }
         }
@@ -92,6 +90,11 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
      * Resolves a collection dependency by extracting the generic element
      * type and gathering all assignable instances into the appropriate
      * collection type.
+     *
+     * <p>Supports both simple generic types (e.g. {@code List<Progression>})
+     * and parameterized generic types (e.g. {@code List<Progression<BreakBlockEvent>>}).
+     * For parameterized element types, the raw type is extracted and used
+     * for resolution, as generic type arguments are erased at runtime.</p>
      *
      * @param genericType the parameterized field or parameter type
      * @param rawType     the raw collection class ({@link List} or {@link Set})
@@ -107,8 +110,17 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
 
         final Type actualTypeArgument = parameterizedType.getActualTypeArguments()[0];
 
-        if (!(actualTypeArgument instanceof final Class<?> elementClass)) {
-            throw new DependencyException("Unsupported generic dependency type.");
+        final Class<?> elementClass;
+
+        if (actualTypeArgument instanceof final Class<?> clazz) {
+            elementClass = clazz;
+        } else if (actualTypeArgument instanceof final ParameterizedType parameterizedElementType) {
+            if (!(parameterizedElementType.getRawType() instanceof final Class<?> rawElementClass)) {
+                throw new DependencyException("Unsupported generic dependency type: %s".formatted(actualTypeArgument.getTypeName()));
+            }
+            elementClass = rawElementClass;
+        } else {
+            throw new DependencyException("Unsupported generic dependency type: %s".formatted(actualTypeArgument.getTypeName()));
         }
 
         final List<?> assignableInstanceList = this.getComponentContainer().getAssignableInstanceList(elementClass);
