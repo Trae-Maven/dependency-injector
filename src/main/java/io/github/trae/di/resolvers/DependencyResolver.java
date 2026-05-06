@@ -96,6 +96,11 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
      * For parameterized element types, the raw type is extracted and used
      * for resolution, as generic type arguments are erased at runtime.</p>
      *
+     * <p>Before querying the container, any registered but unbuilt component
+     * classes assignable to the element type are eagerly constructed via
+     * the {@link ConstructorResolver}. This ensures that collection
+     * dependencies are fully populated regardless of initialization order.</p>
+     *
      * @param genericType the parameterized field or parameter type
      * @param rawType     the raw collection class ({@link List} or {@link Set})
      * @return a new collection containing all matching instances
@@ -121,6 +126,15 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
             elementClass = rawElementClass;
         } else {
             throw new DependencyException("Unsupported generic dependency type: %s".formatted(actualTypeArgument.getTypeName()));
+        }
+
+        // Eagerly construct any unbuilt components assignable to the element type
+        if (this.constructorResolver != null) {
+            for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {
+                if (elementClass.isAssignableFrom(componentClass) && !(this.getComponentContainer().isInstance(componentClass))) {
+                    this.constructorResolver.create(componentClass);
+                }
+            }
         }
 
         final List<?> assignableInstanceList = this.getComponentContainer().getAssignableInstanceList(elementClass);
