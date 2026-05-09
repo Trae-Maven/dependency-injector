@@ -22,6 +22,14 @@ import java.util.function.Consumer;
  * instances and registers them with a shared
  * {@link ScheduledExecutorService}.
  *
+ * <p>Each {@link io.github.trae.di.InjectorApi InjectorApi} application
+ * receives its own {@code SchedulerResolver} instance with its own
+ * per-application synchronous and asynchronous executors, ensuring
+ * that scheduled tasks are dispatched through the correct platform
+ * plugin (e.g. the owning Bukkit or Hytale plugin). The backing
+ * {@link ScheduledExecutorService} may be shared across all
+ * applications.</p>
+ *
  * <p>Supports two scheduling modes:</p>
  * <ul>
  *   <li><b>Standard</b> ({@code clock = false}) — the task waits an
@@ -45,23 +53,29 @@ import java.util.function.Consumer;
  * scheduler thread pool.</p>
  *
  * <p>All scheduled futures are tracked so they can be cancelled
- * cleanly during {@link #shutdown()}.</p>
+ * cleanly during {@link #shutdown()}. The backing executor is
+ * <em>not</em> shut down by this resolver — it may be shared across
+ * multiple applications and is managed by
+ * {@link io.github.trae.di.InjectorApi InjectorApi} when the last
+ * application shuts down.</p>
  */
 public class SchedulerResolver extends AbstractResolver implements ISchedulerResolver {
 
     private final List<ScheduledFuture<?>> scheduledFutureArrayList = new ArrayList<>();
 
     /**
-     * Optional executor for dispatching tasks with {@code asynchronous = false}
-     * onto the platform's main thread. If {@code null}, synchronous
-     * tasks run directly on the internal scheduler thread pool.
+     * Optional per-application executor for dispatching tasks with
+     * {@code asynchronous = false} onto the platform's main thread.
+     * If {@code null}, synchronous tasks run directly on the internal
+     * scheduler thread pool.
      */
     private final Consumer<Runnable> synchronousExecutor;
 
     /**
-     * Optional executor for dispatching tasks with {@code asynchronous = true}
-     * onto the platform's asynchronous thread pool. If {@code null},
-     * asynchronous tasks run directly on the internal scheduler thread pool.
+     * Optional per-application executor for dispatching tasks with
+     * {@code asynchronous = true} onto the platform's asynchronous
+     * thread pool. If {@code null}, asynchronous tasks run directly
+     * on the internal scheduler thread pool.
      */
     private final Consumer<Runnable> asynchronousExecutor;
 
@@ -74,15 +88,16 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
     private ScheduledExecutorService scheduledExecutorService;
 
     /**
-     * Creates a new resolver with optional platform executors. The
-     * backing {@link ScheduledExecutorService} is not created until
-     * the first {@link Scheduler @Scheduler}-annotated method is
-     * discovered, avoiding unnecessary thread allocation when an
-     * application has no scheduled tasks.
+     * Creates a new resolver with optional per-application platform
+     * executors. The backing {@link ScheduledExecutorService} is not
+     * created until the first {@link Scheduler @Scheduler}-annotated
+     * method is discovered, avoiding unnecessary thread allocation
+     * when an application has no scheduled tasks.
      *
-     * @param componentContainer   the shared component container
-     * @param synchronousExecutor  executor for synchronous tasks, or {@code null}
-     * @param asynchronousExecutor executor for asynchronous tasks, or {@code null}
+     * @param componentContainer       the shared component container
+     * @param synchronousExecutor      per-application executor for synchronous tasks, or {@code null}
+     * @param asynchronousExecutor     per-application executor for asynchronous tasks, or {@code null}
+     * @param scheduledExecutorService the shared executor, or {@code null} to lazily create one
      */
     public SchedulerResolver(final ComponentContainer componentContainer, final Consumer<Runnable> synchronousExecutor, final Consumer<Runnable> asynchronousExecutor, final ScheduledExecutorService scheduledExecutorService) {
         super(componentContainer);
@@ -129,7 +144,11 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
     }
 
     /**
-     * Cancels all scheduled tasks and shuts down the executor.
+     * Cancels all scheduled tasks registered by this resolver. The
+     * backing {@link ScheduledExecutorService} is not shut down here
+     * as it may be shared across multiple applications; executor
+     * shutdown is handled by {@link io.github.trae.di.InjectorApi}
+     * when the last application shuts down.
      */
     @Override
     public void shutdown() {

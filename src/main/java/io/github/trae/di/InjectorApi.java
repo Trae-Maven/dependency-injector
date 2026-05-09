@@ -139,28 +139,33 @@ public class InjectorApi {
     private static ScheduledExecutorService scheduledExecutorService;
 
     /**
-     * Optional executor for dispatching {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
-     * tasks with {@code asynchronous = false} onto the platform's main thread
-     * (e.g. Bukkit's {@code runTask}, Hytale's server scheduler).
+     * Maps each {@link Application @Application}-annotated class to its
+     * synchronous executor for dispatching
+     * {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = false} onto the platform's main
+     * thread (e.g. Bukkit's {@code runTask}, Hytale's server scheduler).
      *
-     * <p>If not set, synchronous tasks fall back to running on the
-     * internal scheduler thread pool.</p>
+     * <p>Set via {@link #setSynchronousExecutor(Class, Consumer)} before
+     * {@link #initialize(Class)}. If no executor is registered for an
+     * application, synchronous tasks fall back to running on the internal
+     * scheduler thread pool.</p>
      */
-    @Getter
-    @Setter
-    private static Consumer<Runnable> synchronousExecutor;
+    private static final Map<Class<?>, Consumer<Runnable>> synchronousExecutorMap = new LinkedHashMap<>();
 
     /**
-     * Optional executor for dispatching {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
-     * tasks with {@code asynchronous = true} onto the platform's asynchronous
-     * thread pool (e.g. Bukkit's {@code runTaskAsynchronously}).
+     * Maps each {@link Application @Application}-annotated class to its
+     * asynchronous executor for dispatching
+     * {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = true} onto the platform's
+     * asynchronous thread pool (e.g. Bukkit's
+     * {@code runTaskAsynchronously}).
      *
-     * <p>If not set, asynchronous tasks run on the internal scheduler
-     * thread pool.</p>
+     * <p>Set via {@link #setAsynchronousExecutor(Class, Consumer)} before
+     * {@link #initialize(Class)}. If no executor is registered for an
+     * application, asynchronous tasks fall back to running on the internal
+     * scheduler thread pool.</p>
      */
-    @Getter
-    @Setter
-    private static Consumer<Runnable> asynchronousExecutor;
+    private static final Map<Class<?>, Consumer<Runnable>> asynchronousExecutorMap = new LinkedHashMap<>();
 
     /**
      * Registers a configuration directory for the given
@@ -207,6 +212,99 @@ public class InjectorApi {
         }
 
         return configurationDirectoryMap.get(applicationClass);
+    }
+
+    /**
+     * Registers a synchronous executor for the given
+     * {@link Application @Application}-annotated class. The executor is
+     * used to dispatch {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = false} onto the platform's main
+     * thread. Must be called before {@link #initialize(Class)}.
+     *
+     * @param applicationClass    the {@code @Application}-annotated class
+     * @param synchronousExecutor the executor for synchronous task dispatch
+     */
+    public static void setSynchronousExecutor(final Class<?> applicationClass, final Consumer<Runnable> synchronousExecutor) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (synchronousExecutor == null) {
+            throw new IllegalArgumentException("Synchronous Executor cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        synchronousExecutorMap.put(applicationClass, synchronousExecutor);
+    }
+
+    /**
+     * Returns the synchronous executor registered for the given
+     * {@link Application @Application}-annotated class, or {@code null}
+     * if none has been set.
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     * @return the synchronous executor, or {@code null}
+     */
+    public static Consumer<Runnable> getSynchronousExecutor(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        return synchronousExecutorMap.get(applicationClass);
+    }
+
+    /**
+     * Registers an asynchronous executor for the given
+     * {@link Application @Application}-annotated class. The executor is
+     * used to dispatch {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
+     * tasks with {@code asynchronous = true} onto the platform's
+     * asynchronous thread pool. Must be called before
+     * {@link #initialize(Class)}.
+     *
+     * @param applicationClass     the {@code @Application}-annotated class
+     * @param asynchronousExecutor the executor for asynchronous task dispatch
+     */
+    public static void setAsynchronousExecutor(final Class<?> applicationClass, final Consumer<Runnable> asynchronousExecutor) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (asynchronousExecutor == null) {
+            throw new IllegalArgumentException("Asynchronous Executor cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        asynchronousExecutorMap.put(applicationClass, asynchronousExecutor);
+    }
+
+    /**
+     * Returns the asynchronous executor registered for the given
+     * {@link Application @Application}-annotated class, or {@code null}
+     * if none has been set.
+     *
+     * @param applicationClass the {@code @Application}-annotated class
+     * @return the asynchronous executor, or {@code null}
+     */
+    public static Consumer<Runnable> getAsynchronousExecutor(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        return asynchronousExecutorMap.get(applicationClass);
     }
 
     /**
@@ -370,6 +468,9 @@ public class InjectorApi {
             invokeAnnotatedMethods(instance, ApplicationReady.class);
         }
 
+        final Consumer<Runnable> synchronousExecutor = synchronousExecutorMap.get(rootClass);
+        final Consumer<Runnable> asynchronousExecutor = asynchronousExecutorMap.get(rootClass);
+
         final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer(), synchronousExecutor, asynchronousExecutor, scheduledExecutorService);
 
         for (final Class<?> type : newComponentClassList) {
@@ -446,6 +547,8 @@ public class InjectorApi {
         applicationComponentMap.remove(rootClass);
         initializedApplicationSet.remove(rootClass);
         configurationDirectoryMap.remove(rootClass);
+        synchronousExecutorMap.remove(rootClass);
+        asynchronousExecutorMap.remove(rootClass);
 
         getComponentContainer().buildCache();
 
@@ -462,8 +565,9 @@ public class InjectorApi {
             componentContainer = null;
             configurationResolver = null;
             configurationDirectoryMap.clear();
-            synchronousExecutor = null;
-            asynchronousExecutor = null;
+            synchronousExecutorMap.clear();
+            asynchronousExecutorMap.clear();
+            scheduledExecutorService = null;
         }
     }
 
