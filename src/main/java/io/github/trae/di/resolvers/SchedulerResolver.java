@@ -65,7 +65,13 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      */
     private final Consumer<Runnable> asynchronousExecutor;
 
-    private ScheduledExecutorService executorService;
+    /**
+     * The backing executor for scheduling tasks. Either the shared
+     * instance passed in at construction time from
+     * {@link io.github.trae.di.InjectorApi}, or a lazily created
+     * daemon-threaded pool if none was provided.
+     */
+    private ScheduledExecutorService scheduledExecutorService;
 
     /**
      * Creates a new resolver with optional platform executors. The
@@ -78,11 +84,12 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
      * @param synchronousExecutor  executor for synchronous tasks, or {@code null}
      * @param asynchronousExecutor executor for asynchronous tasks, or {@code null}
      */
-    public SchedulerResolver(final ComponentContainer componentContainer, final Consumer<Runnable> synchronousExecutor, final Consumer<Runnable> asynchronousExecutor) {
+    public SchedulerResolver(final ComponentContainer componentContainer, final Consumer<Runnable> synchronousExecutor, final Consumer<Runnable> asynchronousExecutor, final ScheduledExecutorService scheduledExecutorService) {
         super(componentContainer);
 
         this.synchronousExecutor = synchronousExecutor;
         this.asynchronousExecutor = asynchronousExecutor;
+        this.scheduledExecutorService = scheduledExecutorService;
     }
 
     /**
@@ -131,10 +138,6 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
         }
 
         this.scheduledFutureArrayList.clear();
-
-        if (this.executorService != null) {
-            this.executorService.shutdown();
-        }
     }
 
     /**
@@ -169,8 +172,8 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
             throw new InjectorException("@%s period must be positive: %s.%s".formatted(Scheduler.class.getSimpleName(), instance.getClass().getName(), method.getName()));
         }
 
-        if (this.executorService == null) {
-            this.executorService = Executors.newScheduledThreadPool(0, runnable -> {
+        if (this.scheduledExecutorService == null) {
+            this.scheduledExecutorService = Executors.newScheduledThreadPool(0, runnable -> {
                 final Thread thread = new Thread(runnable);
                 thread.setDaemon(true);
                 thread.setName("di-scheduler");
@@ -185,7 +188,7 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
 
             final Runnable task = wrapTask(instance, method, annotation.asynchronous());
 
-            final ScheduledFuture<?> future = this.executorService.scheduleAtFixedRate(task, initialDelayMillis, periodMillis, TimeUnit.MILLISECONDS);
+            final ScheduledFuture<?> future = this.scheduledExecutorService.scheduleAtFixedRate(task, initialDelayMillis, periodMillis, TimeUnit.MILLISECONDS);
 
             this.scheduledFutureArrayList.add(future);
         }
@@ -229,11 +232,11 @@ public class SchedulerResolver extends AbstractResolver implements ISchedulerRes
                 final long nextExpected = expected.addAndGet(periodMillis);
                 final long nextDelay = Math.max(0, nextExpected - System.currentTimeMillis());
 
-                scheduledFutureArrayList.add(executorService.schedule(this, nextDelay, TimeUnit.MILLISECONDS));
+                scheduledFutureArrayList.add(scheduledExecutorService.schedule(this, nextDelay, TimeUnit.MILLISECONDS));
             }
         };
 
-        this.scheduledFutureArrayList.add(this.executorService.schedule(tick, initialDelay, TimeUnit.MILLISECONDS));
+        this.scheduledFutureArrayList.add(this.scheduledExecutorService.schedule(tick, initialDelay, TimeUnit.MILLISECONDS));
     }
 
     /**

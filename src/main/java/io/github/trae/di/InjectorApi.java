@@ -31,6 +31,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Consumer;
 
 /**
@@ -124,6 +125,18 @@ public class InjectorApi {
      * per-application.
      */
     private static final Map<Class<?>, SchedulerResolver> schedulerResolverMap = new LinkedHashMap<>();
+
+    /**
+     * The shared {@link ScheduledExecutorService} used by all
+     * {@link SchedulerResolver} instances. Set via
+     * {@link #setScheduledExecutorService(ScheduledExecutorService)}
+     * before {@link #initialize(Class)} to provide a custom thread pool;
+     * if {@code null}, each resolver will lazily create its own
+     * daemon-threaded pool on first use.
+     */
+    @Getter
+    @Setter
+    private static ScheduledExecutorService scheduledExecutorService;
 
     /**
      * Optional executor for dispatching {@link io.github.trae.di.annotations.method.Scheduler @Scheduler}
@@ -357,7 +370,7 @@ public class InjectorApi {
             invokeAnnotatedMethods(instance, ApplicationReady.class);
         }
 
-        final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer(), synchronousExecutor, asynchronousExecutor);
+        final SchedulerResolver schedulerResolver = new SchedulerResolver(getComponentContainer(), synchronousExecutor, asynchronousExecutor, scheduledExecutorService);
 
         for (final Class<?> type : newComponentClassList) {
             final Object instance = getComponentContainer().getInstance(type);
@@ -441,6 +454,10 @@ public class InjectorApi {
         }
 
         if (initializedApplicationSet.isEmpty()) {
+            if (scheduledExecutorService != null) {
+                scheduledExecutorService.shutdown();
+            }
+
             getComponentContainer().clear();
             componentContainer = null;
             configurationResolver = null;
