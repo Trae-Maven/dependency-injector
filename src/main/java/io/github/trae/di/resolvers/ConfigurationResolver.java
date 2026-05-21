@@ -42,6 +42,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * container, any component holding a reference to a config instance will
  * see updated values immediately after a reload.</p>
  *
+ * <p>On every load and reload, the file is re-saved from the deserialized
+ * instance so that fields removed from the class are stripped from the
+ * file and new fields are written with their default values.</p>
+ *
  * <p>The resulting instance is registered into the {@link ComponentContainer}.</p>
  */
 public class ConfigurationResolver extends AbstractResolver implements IConfigurationResolver {
@@ -117,7 +121,6 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
         this.filePathMap.put(type, filePath);
         this.configTypeMap.put(type, configType);
         this.getComponentContainer().registerInstance(type, instance);
-
     }
 
     /**
@@ -128,6 +131,10 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
      * <p>The same object reference is retained in the DI container, so any
      * component holding a reference to this config will see updated values
      * immediately after this call.</p>
+     *
+     * <p>After copying, the file is re-saved to strip any keys that no
+     * longer correspond to fields on the class and to add any new fields
+     * with their default values.</p>
      *
      * @param type the {@code @Configuration}-annotated class to reload
      * @throws InjectorException if the type is not registered, or reading fails
@@ -154,6 +161,9 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
             final Object existing = this.getComponentContainer().getInstance(type);
 
             copyFields(loaded, existing);
+
+            // Re-save to strip removed fields and add new defaults
+            save(type);
         } catch (final IOException e) {
             throw new InjectorException("Failed to reload configuration: %s".formatted(filePath), e);
         }
@@ -212,6 +222,10 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
      * Loads a configuration instance from the given file path, or creates a default
      * instance and writes it to disk if the file does not exist.
      *
+     * <p>When the file exists, the deserialized instance is re-saved to strip any
+     * keys that no longer correspond to fields on the class and to add any new
+     * fields with their default values.</p>
+     *
      * @param type       the configuration class
      * @param filePath   the path to the file
      * @param serializer the serializer to use
@@ -222,7 +236,12 @@ public class ConfigurationResolver extends AbstractResolver implements IConfigur
         try {
             if (Files.exists(filePath)) {
                 final String content = Files.readString(filePath);
-                return serializer.deserialize(content, type);
+                final Object instance = serializer.deserialize(content, type);
+
+                // Re-save to strip removed fields and add new defaults
+                save(instance, filePath, serializer);
+
+                return instance;
             }
 
             final Object defaultInstance = type.getDeclaredConstructor().newInstance();
