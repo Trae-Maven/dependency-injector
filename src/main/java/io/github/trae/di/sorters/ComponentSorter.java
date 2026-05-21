@@ -26,7 +26,7 @@ import java.util.*;
  */
 public class ComponentSorter {
 
-    private static final List<ComponentComparator> comparatorList = new ArrayList<>();
+    private static final Map<Class<? extends ComponentComparator>, ComponentComparator> comparatorList = new HashMap<>();
 
     /**
      * Registers an additional comparator to be applied after the
@@ -40,7 +40,7 @@ public class ComponentSorter {
             throw new IllegalArgumentException("Comparator cannot be null.");
         }
 
-        comparatorList.add(comparator);
+        comparatorList.put(comparator.getClass(), comparator);
     }
 
     /**
@@ -53,7 +53,7 @@ public class ComponentSorter {
             throw new IllegalArgumentException("Comparator cannot be null.");
         }
 
-        comparatorList.remove(comparator);
+        comparatorList.remove(comparator.getClass());
     }
 
     /**
@@ -70,7 +70,7 @@ public class ComponentSorter {
 
         Comparator<Class<?>> comparator = Comparator.comparingInt(ComponentSorter::getOrder);
 
-        for (final ComponentComparator additional : comparatorList) {
+        for (final ComponentComparator additional : comparatorList.values()) {
             comparator = comparator.thenComparing(additional);
         }
 
