@@ -168,6 +168,16 @@ public class InjectorApi {
     private static final Map<Class<?>, Consumer<Runnable>> asynchronousExecutorMap = new LinkedHashMap<>();
 
     /**
+     * Maps each {@link Application @Application}-annotated class to the
+     * set of component classes that have been explicitly disabled via
+     * {@link #setComponentEnabled(Class, Class, boolean)}. Components are
+     * enabled by default and only appear in this map when disabled.
+     *
+     * <p>Cleaned up per-application during {@link #shutdown(Class)}.</p>
+     */
+    private static final Map<Class<?>, Set<Class<?>>> disabledComponentMap = new LinkedHashMap<>();
+
+    /**
      * Registers a configuration directory for the given
      * {@link Application @Application}-annotated class. Must be called
      * before {@link #initialize(Class)} so that any
@@ -305,6 +315,103 @@ public class InjectorApi {
         }
 
         return asynchronousExecutorMap.get(applicationClass);
+    }
+
+    /**
+     * Returns whether the given component class is enabled.
+     *
+     * <p>Components are enabled by default. A component can be disabled
+     * via {@link #setComponentEnabled(Class, Class, boolean)}, which prevents
+     * it from being constructed during initialization or excludes it
+     * from active use at runtime.</p>
+     *
+     * @param applicationClass the {@code @Application}-annotated class that owns the component
+     * @param type             the component class to check
+     * @return {@code true} if the component is enabled, {@code false} otherwise
+     */
+    public static boolean isComponentEnabled(final Class<?> applicationClass, final Class<?> type) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        return !(disabledComponentMap.getOrDefault(applicationClass, Collections.emptySet()).contains(type));
+    }
+
+    /**
+     * Enables or disables the given component class.
+     *
+     * @param applicationClass the {@code @Application}-annotated class that owns the component
+     * @param type             the component class
+     * @param enabled          {@code true} to enable, {@code false} to disable
+     */
+    public static void setComponentEnabled(final Class<?> applicationClass, final Class<?> type, final boolean enabled) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        final Set<Class<?>> disabledSet = disabledComponentMap.computeIfAbsent(applicationClass, k -> new HashSet<>());
+
+        if (enabled) {
+            disabledSet.remove(type);
+        } else {
+            disabledSet.add(type);
+        }
+    }
+
+    /**
+     * Returns whether the given component class is enabled across all
+     * applications.
+     *
+     * @param type the component class to check
+     * @return {@code true} if the component is enabled, {@code false} otherwise
+     * @see #isComponentEnabled(Class, Class)
+     */
+    public static boolean isComponentEnabled(final Class<?> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        return disabledComponentMap.values().stream().noneMatch(set -> set.contains(type));
+    }
+
+    /**
+     * Enables or disables the given component class, resolving the owning
+     * application automatically.
+     *
+     * @param type    the component class
+     * @param enabled {@code true} to enable, {@code false} to disable
+     * @throws InjectorException if the component is not registered with
+     *                           any application
+     * @see #setComponentEnabled(Class, Class, boolean)
+     */
+    public static void setComponentEnabled(final Class<?> type, final boolean enabled) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        final Class<?> owningApplication = resolveOwningApplication(type);
+
+        if (owningApplication == null) {
+            throw new InjectorException("Component is not registered with any application: %s".formatted(type.getName()));
+        }
+
+        setComponentEnabled(owningApplication, type, enabled);
     }
 
     /**
@@ -549,6 +656,7 @@ public class InjectorApi {
         configurationDirectoryMap.remove(rootClass);
         synchronousExecutorMap.remove(rootClass);
         asynchronousExecutorMap.remove(rootClass);
+        disabledComponentMap.remove(rootClass);
 
         getComponentContainer().buildCache();
 
@@ -567,6 +675,7 @@ public class InjectorApi {
             configurationDirectoryMap.clear();
             synchronousExecutorMap.clear();
             asynchronousExecutorMap.clear();
+            disabledComponentMap.clear();
             scheduledExecutorService = null;
         }
     }
@@ -1180,5 +1289,22 @@ public class InjectorApi {
 
             clazz = clazz.getSuperclass();
         }
+    }
+
+    /**
+     * Resolves which {@link Application @Application} owns the given
+     * component class by searching the application-to-component mapping.
+     *
+     * @param type the component class to look up
+     * @return the owning application class, or {@code null} if not found
+     */
+    private static Class<?> resolveOwningApplication(final Class<?> type) {
+        for (final Map.Entry<Class<?>, List<Class<?>>> entry : applicationComponentMap.entrySet()) {
+            if (entry.getValue().contains(type)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
     }
 }
