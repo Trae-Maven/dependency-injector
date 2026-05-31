@@ -719,6 +719,30 @@ public class InjectorApi {
     }
 
     /**
+     * Returns all registered component instances assignable to the given type.
+     *
+     * <p>Uses the container's assignable-type cache built during
+     * {@link #initialize(Class)} to find all components that are instances
+     * of or extend/implement the given type.</p>
+     *
+     * @param type the type to search for
+     * @param <T>  the component type
+     * @return an unmodifiable list of all matching instances, or empty if none found
+     * @throws InjectorException if the container has not been initialized
+     */
+    public static <T> List<T> getAll(final Class<T> type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null.");
+        }
+
+        if (getComponentContainer() == null) {
+            throw new InjectorException("Application has not been initialized.");
+        }
+
+        return getComponentContainer().getAssignableInstanceList(type);
+    }
+
+    /**
      * Returns all registered {@link Configuration @Configuration} classes
      * across all initialized applications.
      *
@@ -1231,22 +1255,6 @@ public class InjectorApi {
         }
 
         return true;
-    }
-
-    /**
-     * Invokes all methods annotated with the given lifecycle annotation
-     * across every instance in the container.
-     *
-     * @param annotation the lifecycle annotation to invoke
-     */
-    private static void invokeLifecycle(final Class<? extends Annotation> annotation) {
-        if (annotation == null) {
-            throw new IllegalArgumentException("Annotation cannot be null.");
-        }
-
-        for (final Object instance : getComponentContainer().getInstanceList()) {
-            invokeAnnotatedMethods(instance, annotation);
-        }
     }
 
     /**
