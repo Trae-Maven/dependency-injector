@@ -73,7 +73,7 @@ public class ScanResolver extends AbstractResolver implements IScanResolver {
             while (!queue.isEmpty()) {
                 final Class<?> currentType = queue.poll();
 
-                if (currentType == null || currentType == Object.class || !(visitedTypeSet.add(currentType))) {
+                if (currentType == Object.class || !(visitedTypeSet.add(currentType))) {
                     continue;
                 }
 
@@ -86,7 +86,11 @@ public class ScanResolver extends AbstractResolver implements IScanResolver {
                     }
                 }
 
-                queue.add(currentType.getSuperclass());
+                final Class<?> superClassType = currentType.getSuperclass();
+                if (superClassType != null) {
+                    queue.add(superClassType);
+                }
+
                 queue.addAll(List.of(currentType.getInterfaces()));
             }
         });
