@@ -93,6 +93,19 @@ public class InjectorApi {
      */
     private static final Map<Class<?>, List<Class<?>>> applicationComponentMap = new LinkedHashMap<>();
 
+    /**
+     * The component classes resolved from {@link io.github.trae.di.annotations.type.Scan @Scan}
+     * system packages — framework and library components that are shared
+     * across all applications rather than owned by any single one.
+     *
+     * <p>System components are registered once, by the first application to
+     * boot whose hierarchy resolves the owning package. They are never torn
+     * down by an individual {@link #shutdown(Class)} call; instead they are
+     * destroyed only when the last application shuts down and the container
+     * is cleared.</p>
+     */
+    private static final List<Class<?>> systemComponentClassList = new ArrayList<>();
+
     @Getter
     private static ComponentContainer componentContainer;
 
@@ -498,9 +511,21 @@ public class InjectorApi {
                 continue;
             }
 
-            final List<Class<?>> scannedComponentClassList = scanComponents(applicationClass);
+            final List<Class<?>> systemScannedComponentClassList = scanSystemComponents(applicationClass);
+            final List<Class<?>> applicationScannedComponentClassList = scanComponents(applicationClass.getPackageName());
 
-            final List<Class<?>> sortedComponentClassList = ComponentSorter.sort(scannedComponentClassList);
+            // Register system components first — shared across all applications,
+            // owned by the container. Only the first application to reach a
+            // given package registers it; later applications reuse it.
+            for (final Class<?> type : ComponentSorter.sort(systemScannedComponentClassList)) {
+                if (!(getComponentContainer().getComponentClassList().contains(type))) {
+                    getComponentContainer().registerComponentClass(type);
+                    newComponentClassList.add(type);
+                    systemComponentClassList.add(type);
+                }
+            }
+
+            final List<Class<?>> sortedComponentClassList = ComponentSorter.sort(applicationScannedComponentClassList);
 
             final List<Class<?>> applicationNewClassList = new ArrayList<>();
 
@@ -660,6 +685,37 @@ public class InjectorApi {
         }
 
         if (initializedApplicationSet.isEmpty()) {
+            // Last application — tear down the shared system components before
+            // clearing the container, in reverse registration order.
+            final List<Class<?>> systemShutdownClassList = new ArrayList<>(systemComponentClassList);
+
+            Collections.reverse(systemShutdownClassList);
+
+            final List<Object> systemInstanceList = new ArrayList<>();
+
+            for (final Class<?> type : systemShutdownClassList) {
+                if (!(getComponentContainer().isInstance(type))) {
+                    continue;
+                }
+
+                final Object instance = getComponentContainer().getInstance(type);
+
+                invokeAnnotatedMethods(instance, PreDestroy.class);
+
+                systemInstanceList.add(instance);
+            }
+
+            for (final Class<?> type : systemShutdownClassList) {
+                getComponentContainer().unregisterInstance(type);
+                getComponentContainer().unregisterComponentClass(type);
+            }
+
+            for (final Object instance : systemInstanceList) {
+                invokeAnnotatedMethods(instance, PostDestroy.class);
+            }
+
+            systemComponentClassList.clear();
+
             if (scheduledExecutorService != null) {
                 scheduledExecutorService.shutdown();
             }
@@ -1102,39 +1158,36 @@ public class InjectorApi {
     }
 
     /**
-     * Resolves the {@link Scan @Scan} base packages for the given
-     * {@link Application @Application}-annotated class and scans each one
-     * for component classes.
+     * Resolves the {@link Scan @Scan} system base packages for the given
+     * {@link Application @Application}-annotated class and scans each one for
+     * component classes.
      *
-     * <p>The base packages are resolved by {@link ScanResolver}, which walks
+     * <p>The system packages are resolved by {@link ScanResolver}, which walks
      * the application class's superclass and interface hierarchy and collects
-     * every declared {@code @Scan} annotation. This allows framework layers
-     * higher up the hierarchy (e.g. a Hierarchy-Framework {@code Plugin}
-     * interface or a platform-specific base plugin class) to contribute their
-     * own packages so their components are discovered alongside the
-     * application's own. If no {@code @Scan} annotation is present anywhere in
-     * the hierarchy, the application class's own package is used as a fallback.</p>
+     * every declared {@code @Scan} annotation. Each {@code @Scan} package
+     * belongs to a framework or library shared across applications, so the
+     * components discovered here are system-scoped — registered once and owned
+     * by the container, not by the booting application. The application's own
+     * package is not scanned here; it is scanned separately as
+     * application-scoped via {@link #scanComponents(String)}.</p>
      *
-     * <p>Each resolved package is scanned via {@link #scanComponents(String)}
-     * and the results are merged into a single deduplicated list, preserving
-     * the order in which packages were resolved.</p>
+     * <p>Each resolved package is scanned and the results are merged into a
+     * single deduplicated list, preserving the order in which packages were
+     * resolved. If the hierarchy declares no {@code @Scan}, the result is
+     * empty.</p>
      *
      * @param applicationClass the {@code @Application}-annotated class to scan
-     * @return an unmodifiable, deduplicated list of valid component classes
-     * discovered across all resolved base packages
+     * @return an unmodifiable, deduplicated list of valid system component
+     * classes discovered across all resolved {@code @Scan} packages
      * @throws InjectorException if a non-concrete type is annotated with a
      *                           component annotation in any scanned package
      */
-    private static List<Class<?>> scanComponents(final Class<?> applicationClass) {
+    private static List<Class<?>> scanSystemComponents(final Class<?> applicationClass) {
         if (applicationClass == null) {
             throw new IllegalArgumentException("Application Class cannot be null.");
         }
 
         final List<String> basePackageList = new ScanResolver(getComponentContainer()).resolve(applicationClass);
-
-        if (basePackageList.isEmpty()) {
-            basePackageList.add(applicationClass.getPackageName());
-        }
 
         return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
             for (final String basePackage : basePackageList) {
@@ -1202,7 +1255,9 @@ public class InjectorApi {
             // Resolve the classloader from a class already loaded by pass 1,
             // falling back to the context classloader if pass 1 found nothing.
             // This ensures classes in isolated plugin classloaders can be loaded.
-            final ClassLoader classLoader = set.isEmpty() ? Thread.currentThread().getContextClassLoader() : set.iterator().next().getClassLoader();
+            final ClassLoader classLoader = set.isEmpty()
+                    ? Thread.currentThread().getContextClassLoader()
+                    : set.iterator().next().getClassLoader();
 
             // Pass 2 — meta-annotations: iterate the raw TypesAnnotated store
             // values (annotated class names) and check if any carry a

@@ -9,16 +9,18 @@ import io.github.trae.utilities.UtilJava;
 import java.util.*;
 
 /**
- * Resolves the {@link Scan @Scan} base packages for a bootstrap type by
- * walking its full type hierarchy.
+ * Resolves the {@link Scan @Scan} system base packages for a bootstrap type
+ * by walking its full type hierarchy.
  *
  * <p>Starting from the bootstrap type, the resolver performs a breadth-first
  * traversal over both the superclass chain and all implemented interfaces,
  * collecting every {@link Scan @Scan} annotation declared directly on a
- * visited type. This allows each layer of a framework hierarchy — base
- * classes and interfaces alike — to contribute the packages it owns, so the
- * effective scan set is the union of all {@code @Scan} declarations reachable
- * from the bootstrap type.</p>
+ * visited type. Every package contributed by a {@code @Scan} is treated as a
+ * <em>system</em> package — its components are framework-level and shared
+ * across all applications, owned by the container rather than any single
+ * application. The bootstrap type's own package is <strong>not</strong>
+ * included here; it is application-scoped and handled separately by the
+ * caller.</p>
  *
  * <p>Only annotations physically present on a type are considered, via
  * {@link Class#getDeclaredAnnotation(Class)}. Inheritance is handled
@@ -43,28 +45,29 @@ public class ScanResolver extends AbstractResolver implements IScanResolver {
     }
 
     /**
-     * Resolves the ordered, deduplicated list of base packages to scan for the
-     * given bootstrap type.
+     * Resolves the ordered, deduplicated list of system base packages declared
+     * via {@link Scan @Scan} anywhere in the bootstrap type's superclass and
+     * interface hierarchy.
      *
-     * <p>The bootstrap type's own package is always included first, so an
-     * {@code @Application} class is scanned without needing to declare its own
-     * {@link Scan @Scan}. The resolver then performs a breadth-first traversal
-     * over the superclass chain and all implemented interfaces, collecting every
-     * {@link Scan @Scan} annotation declared directly on a visited type. This
-     * lets framework layers higher in the hierarchy contribute the packages they
-     * own. {@link Object} and already-visited types are skipped, and duplicate
-     * package names are removed while preserving traversal order.</p>
+     * <p>Each package returned originates from a {@code @Scan} declaration and
+     * is therefore system-scoped — its components belong to a framework or
+     * library shared across applications, not to the booting application
+     * itself. The bootstrap type's own package is intentionally excluded; the
+     * caller scans that separately as application-scoped.</p>
+     *
+     * <p>The traversal is breadth-first: at each type the superclass is
+     * enqueued before its interfaces, so packages from more-derived types
+     * appear earlier in the result. {@link Object}, already-visited types, and
+     * types with no superclass are handled safely.</p>
      *
      * @param bootstrapType the type to begin the hierarchy walk from,
      *                      typically the {@code @Application} class
-     * @return an ordered, deduplicated list of base packages, beginning with
-     * the bootstrap type's own package
+     * @return an ordered, deduplicated list of system base packages, or an
+     * empty list if no {@code @Scan} is present in the hierarchy
      */
     @Override
     public List<String> resolve(final Class<?> bootstrapType) {
         return UtilJava.createCollection(new ArrayList<>(), list -> {
-            list.add(bootstrapType.getPackageName());
-
             final Set<Class<?>> visitedTypeSet = new HashSet<>();
             final Deque<Class<?>> queue = new ArrayDeque<>();
 
