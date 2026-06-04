@@ -11,6 +11,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 ## Features
 
 - Automatic classpath scanning via `@Component` with meta-annotation support
+- Hierarchy-aware base package scanning via `@Scan`, resolved across superclasses and interfaces
 - Stereotype annotations `@Service` and `@Repository` for semantic clarity
 - `@Configuration` POJOs with JSON and YAML support, in-place reload and save
 - `@Comment` annotations for injecting human-readable comments into config files
@@ -382,6 +383,45 @@ Multiple packages can be specified — all must be present for the component to 
 public class MessageBrokerAdapter {}
 ```
 
+### Package Scanning
+
+An application's own package is always scanned — the package of the `@Application` class is included automatically, with no annotation required. Use `@Scan` to contribute *additional* base packages on top of that. The annotation can be placed anywhere in the application class's hierarchy — on a superclass or on an implemented interface — and the framework walks the full superclass and interface graph of the application class, collecting every `@Scan` it finds. The effective scan set is the application's own package plus the union of all `@Scan` declarations reachable through the hierarchy.
+
+This lets each layer of a framework declare the package it owns, so its components are discovered automatically by any application built on top of it. An application never declares scanning for the frameworks it builds on — implementing the interface or extending the base class is enough — and it never declares scanning for itself either.
+
+A framework layer declares the package it owns on its own base type:
+
+```java
+package io.github.trae.hf;
+
+@Scan("io.github.trae.hf")
+public interface Plugin {
+}
+```
+
+Any application that implements `Plugin` is scanned across both `io.github.trae.hf` (contributed by the `Plugin` interface) and its own package, with zero scanning configuration on the application class:
+
+```java
+package io.github.trae.factions;
+
+@Application
+public class FactionsPlugin implements Plugin {
+}
+```
+
+When `@Scan` is given no value, the package of the annotated type itself is scanned. This is the refactor-safe form — moving the type to a different package moves the scanned package with it:
+
+```java
+package io.github.trae.hf;
+
+@Scan
+public interface Plugin {
+    // scans io.github.trae.hf — the package this interface lives in
+}
+```
+
+If no `@Scan` annotation is present anywhere in the hierarchy, only the application's own package is scanned — which is the default for any plain `@Application` class.
+
 ### Component Comparators
 
 Use `ComponentSorter.addComparator(...)` to register custom sorting logic that runs after the default `@DependsOn` and `@Order` phases. This allows external frameworks to influence initialization order without modifying the core DI.
@@ -611,6 +651,7 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 |---|---|---|
 | `@Application` | Class | Marks a class as an application entry point with optional dependencies |
 | `@Component` | Class | Marks a class as a managed singleton |
+| `@Scan` | Class / Interface | Declares base packages to scan, resolved across the application's superclass and interface hierarchy |
 | `@Service` | Class | Stereotype for service-layer components |
 | `@Repository` | Class | Stereotype for data-access components |
 | `@Configuration` | Class | Marks a class as a config POJO with JSON/YAML support, in-place reload and save |

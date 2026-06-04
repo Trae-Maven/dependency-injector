@@ -5,20 +5,14 @@ import io.github.trae.di.annotations.method.ApplicationReady;
 import io.github.trae.di.annotations.method.PostConstruct;
 import io.github.trae.di.annotations.method.PostDestroy;
 import io.github.trae.di.annotations.method.PreDestroy;
-import io.github.trae.di.annotations.type.Application;
-import io.github.trae.di.annotations.type.DependsOn;
-import io.github.trae.di.annotations.type.Order;
-import io.github.trae.di.annotations.type.SoftDependency;
+import io.github.trae.di.annotations.type.*;
 import io.github.trae.di.annotations.type.component.Component;
 import io.github.trae.di.annotations.type.component.Service;
 import io.github.trae.di.configuration.annotations.Configuration;
 import io.github.trae.di.containers.ComponentContainer;
 import io.github.trae.di.exceptions.DependencyException;
 import io.github.trae.di.exceptions.InjectorException;
-import io.github.trae.di.resolvers.ConfigurationResolver;
-import io.github.trae.di.resolvers.ConstructorResolver;
-import io.github.trae.di.resolvers.FieldResolver;
-import io.github.trae.di.resolvers.SchedulerResolver;
+import io.github.trae.di.resolvers.*;
 import io.github.trae.di.sorters.ComponentSorter;
 import io.github.trae.utilities.UtilJava;
 import lombok.Getter;
@@ -43,14 +37,15 @@ import java.util.function.Consumer;
  *   <li>Application resolution — reads {@link Application @Application}
  *       annotations and topologically sorts the dependency tree so
  *       upstream applications are initialized before downstream ones.</li>
- *   <li>Classpath scanning — discovers {@link Component @Component} classes
- *       in each application's package and validates they are concrete types.
- *       Applications already initialized are skipped. Components annotated
- *       with {@link SoftDependency @SoftDependency} are skipped if any of
- *       their required packages are not present on the runtime classpath.
- *       Custom stereotype annotations meta-annotated with {@code @Component},
- *       {@code @Service}, or {@code @Configuration} are automatically
- *       discovered without any additional registration.</li>
+ *   <li>Classpath scanning — resolves the {@link Scan @Scan} base packages
+ *       for each application by walking its class hierarchy, then discovers
+ *       {@link Component @Component} classes within those packages and
+ *       validates they are concrete types. Applications already initialized
+ *       are skipped. Components annotated with {@link SoftDependency @SoftDependency}
+ *       are skipped if any of their required packages are not present on the
+ *       runtime classpath. Custom stereotype annotations meta-annotated with
+ *       {@code @Component}, {@code @Service}, or {@code @Configuration} are
+ *       automatically discovered without any additional registration.</li>
  *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
  *       constraints, then {@link Order @Order} priority, then any registered
  *       {@link io.github.trae.di.sorters.comparators.ComponentComparator ComponentComparators}.</li>
@@ -503,7 +498,7 @@ public class InjectorApi {
                 continue;
             }
 
-            final List<Class<?>> scannedComponentClassList = scanComponents(applicationClass.getPackageName());
+            final List<Class<?>> scannedComponentClassList = scanComponents(applicationClass);
 
             final List<Class<?>> sortedComponentClassList = ComponentSorter.sort(scannedComponentClassList);
 
@@ -1107,6 +1102,52 @@ public class InjectorApi {
     }
 
     /**
+     * Resolves the {@link Scan @Scan} base packages for the given
+     * {@link Application @Application}-annotated class and scans each one
+     * for component classes.
+     *
+     * <p>The base packages are resolved by {@link ScanResolver}, which walks
+     * the application class's superclass and interface hierarchy and collects
+     * every declared {@code @Scan} annotation. This allows framework layers
+     * higher up the hierarchy (e.g. a Hierarchy-Framework {@code Plugin}
+     * interface or a platform-specific base plugin class) to contribute their
+     * own packages so their components are discovered alongside the
+     * application's own. If no {@code @Scan} annotation is present anywhere in
+     * the hierarchy, the application class's own package is used as a fallback.</p>
+     *
+     * <p>Each resolved package is scanned via {@link #scanComponents(String)}
+     * and the results are merged into a single deduplicated list, preserving
+     * the order in which packages were resolved.</p>
+     *
+     * @param applicationClass the {@code @Application}-annotated class to scan
+     * @return an unmodifiable, deduplicated list of valid component classes
+     * discovered across all resolved base packages
+     * @throws InjectorException if a non-concrete type is annotated with a
+     *                           component annotation in any scanned package
+     */
+    private static List<Class<?>> scanComponents(final Class<?> applicationClass) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        final List<String> basePackageList = new ScanResolver(getComponentContainer()).resolve(applicationClass);
+
+        if (basePackageList.isEmpty()) {
+            basePackageList.add(applicationClass.getPackageName());
+        }
+
+        return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
+            for (final String basePackage : basePackageList) {
+                for (final Class<?> type : scanComponents(basePackage)) {
+                    if (!(list.contains(type))) {
+                        list.add(type);
+                    }
+                }
+            }
+        }));
+    }
+
+    /**
      * Scans the given package for classes annotated with any known component
      * annotation — either directly ({@link Component @Component},
      * {@link Service @Service}, {@link Configuration @Configuration}) or via
@@ -1161,9 +1202,7 @@ public class InjectorApi {
             // Resolve the classloader from a class already loaded by pass 1,
             // falling back to the context classloader if pass 1 found nothing.
             // This ensures classes in isolated plugin classloaders can be loaded.
-            final ClassLoader classLoader = set.isEmpty()
-                    ? Thread.currentThread().getContextClassLoader()
-                    : set.iterator().next().getClassLoader();
+            final ClassLoader classLoader = set.isEmpty() ? Thread.currentThread().getContextClassLoader() : set.iterator().next().getClassLoader();
 
             // Pass 2 — meta-annotations: iterate the raw TypesAnnotated store
             // values (annotated class names) and check if any carry a
