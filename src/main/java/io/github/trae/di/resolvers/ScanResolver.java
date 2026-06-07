@@ -6,7 +6,12 @@ import io.github.trae.di.resolvers.abstracts.AbstractResolver;
 import io.github.trae.di.resolvers.interfaces.IScanResolver;
 import io.github.trae.utilities.UtilJava;
 
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Resolves the {@link Scan @Scan} system base packages for a bootstrap type
