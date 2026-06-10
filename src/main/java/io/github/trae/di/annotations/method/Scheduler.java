@@ -14,13 +14,13 @@ import java.util.concurrent.TimeUnit;
  * during the {@link ApplicationReady} phase and continues to execute
  * until the owning application is shut down.</p>
  *
- * <h3>Standard mode ({@code clock = false})</h3>
+ * <h2>Standard mode ({@code clock = false})</h2>
  * <p>The method first waits {@link #initialDelay()} (defaulting to
  * {@link #period()} if unset), then executes at a fixed rate of
  * {@link #period()} {@link #unit()} from when the scheduler was
  * started.</p>
  *
- * <h3>Clock-aligned mode ({@code clock = true})</h3>
+ * <h2>Clock-aligned mode ({@code clock = true})</h2>
  * <p>The method executes at wall-clock boundaries that are multiples
  * of the configured period. For example, a 5-minute period will
  * fire at {@code :00}, {@code :05}, {@code :10}, {@code :15}, etc.
