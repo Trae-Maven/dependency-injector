@@ -108,7 +108,7 @@ public class InjectorApi {
      * Maps each {@link Application @Application}-annotated class to
      * the component classes that were registered during its initialization.
      */
-    private static final Map<Class<?>, List<Class<?>>> applicationComponentMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, List<Class<?>>> applicationComponentMap = new LinkedHashMap<>();
 
     /**
      * The component classes resolved from {@link io.github.trae.di.annotations.type.Scan @Scan}
@@ -134,7 +134,7 @@ public class InjectorApi {
      * {@link Configuration @Configuration} files are resolved from
      * the correct directory.
      */
-    private static final Map<Class<?>, Path> configurationDirectoryMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, Path> configurationDirectoryMap = new LinkedHashMap<>();
 
     /**
      * The shared configuration resolver, created during initialization if
@@ -149,7 +149,7 @@ public class InjectorApi {
      * {@link SchedulerResolver}, so scheduled tasks can be shut down
      * per-application.
      */
-    private static final Map<Class<?>, SchedulerResolver> schedulerResolverMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, SchedulerResolver> schedulerResolverMap = new LinkedHashMap<>();
 
     /**
      * The shared {@link ScheduledExecutorService} used by all
@@ -175,7 +175,7 @@ public class InjectorApi {
      * application, synchronous tasks fall back to running on the internal
      * scheduler thread pool.</p>
      */
-    private static final Map<Class<?>, Consumer<Runnable>> synchronousExecutorMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, Consumer<Runnable>> synchronousExecutorMap = new LinkedHashMap<>();
 
     /**
      * Maps each {@link Application @Application}-annotated class to its
@@ -190,7 +190,7 @@ public class InjectorApi {
      * application, asynchronous tasks fall back to running on the internal
      * scheduler thread pool.</p>
      */
-    private static final Map<Class<?>, Consumer<Runnable>> asynchronousExecutorMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, Consumer<Runnable>> asynchronousExecutorMap = new LinkedHashMap<>();
 
     /**
      * Maps each {@link Application @Application}-annotated class to the
@@ -200,7 +200,7 @@ public class InjectorApi {
      *
      * <p>Cleaned up per-application during {@link #shutdown(Class)}.</p>
      */
-    private static final Map<Class<?>, Set<Class<?>>> disabledComponentMap = new LinkedHashMap<>();
+    private static final LinkedHashMap<Class<?>, Set<Class<?>>> disabledComponentMap = new LinkedHashMap<>();
 
     /**
      * Registers a configuration directory for the given
