@@ -10,7 +10,7 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 
 ## Features
 
-- Automatic classpath scanning via `@Component` with meta-annotation support
+- Automatic classpath scanning via `@Singleton` with meta-annotation support
 - Hierarchy-aware base package scanning via `@Scan`, resolved across superclasses and interfaces
 - Stereotype annotations `@Service` and `@Repository` for semantic clarity
 - `@Configuration` POJOs with JSON and YAML support, in-place reload and save
@@ -356,7 +356,7 @@ Components in Factions can inject components from Core via constructor or field 
 
 ```java
 @AllArgsConstructor
-@Component
+@Singleton
 public class FactionManager {
 
     private final PlayerManager playerManager; // from Core
@@ -371,7 +371,7 @@ No Maven dependency is required — the check is purely at runtime against whate
 
 ```java
 @SoftDependency("com.stripe.api")
-@Component
+@Singleton
 public class StripePaymentService {}
 ```
 
@@ -379,7 +379,7 @@ Multiple packages can be specified — all must be present for the component to 
 
 ```java
 @SoftDependency({"com.rabbitmq.client", "io.lettuce.core"})
-@Component
+@Singleton
 public class MessageBrokerAdapter {}
 ```
 
@@ -516,7 +516,7 @@ public class FactionsPlugin extends SpigotPlugin {}
 Use `@Scheduler` to mark a no-argument method as a repeating task. The method is registered after the container is fully wired and continues to execute until the owning application is shut down. Each application manages its own scheduled tasks independently — shutting down one application does not affect another's schedulers.
 
 ```java
-@Component
+@Singleton
 public class MetricsService {
 
     @Scheduler(period = 30, unit = TimeUnit.SECONDS)
@@ -544,7 +544,7 @@ Set `clock = true` to align executions to wall-clock boundaries that are multipl
 For example, a 5-minute period fires at `:00`, `:05`, `:10`, `:15`, etc. regardless of when the application started:
 
 ```java
-@Component
+@Singleton
 public class SnapshotService {
 
     @Scheduler(period = 5, unit = TimeUnit.MINUTES, clock = true)
@@ -559,7 +559,7 @@ public class SnapshotService {
 By default, scheduled tasks are dispatched through the synchronous executor (e.g. the game thread). Set `asynchronous = true` to dispatch through the asynchronous executor instead. If no platform executors are set, both modes run on the internal scheduler thread pool:
 
 ```java
-@Component
+@Singleton
 public class AnalyticsService {
 
     // Runs on the platform's main thread (default)
@@ -615,7 +615,7 @@ If neither executor is set, all tasks run on the internal `di-scheduler` daemon 
 A single component can have multiple scheduled methods with different intervals and modes:
 
 ```java
-@Component
+@Singleton
 public class MonitoringService {
 
     @Scheduler(period = 10, unit = TimeUnit.SECONDS)
@@ -650,7 +650,7 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 | Annotation | Target | Description |
 |---|---|---|
 | `@Application` | Class | Marks a class as an application entry point with optional dependencies |
-| `@Component` | Class | Marks a class as a managed singleton |
+| `@Singleton` | Class | Marks a class as a managed singleton |
 | `@Scan` | Class / Interface | Declares base packages to scan, resolved across the application's superclass and interface hierarchy |
 | `@Service` | Class | Stereotype for service-layer components |
 | `@Repository` | Class | Stereotype for data-access components |

@@ -10,10 +10,10 @@ import io.github.trae.di.annotations.type.DependsOn;
 import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.annotations.type.Scan;
 import io.github.trae.di.annotations.type.SoftDependency;
-import io.github.trae.di.annotations.type.component.Bean;
 import io.github.trae.di.annotations.type.component.Component;
 import io.github.trae.di.annotations.type.component.Repository;
 import io.github.trae.di.annotations.type.component.Service;
+import io.github.trae.di.annotations.type.component.Singleton;
 import io.github.trae.di.configuration.annotations.Configuration;
 import io.github.trae.di.containers.ComponentContainer;
 import io.github.trae.di.exceptions.DependencyException;
@@ -94,7 +94,7 @@ import java.util.function.Consumer;
  */
 public class InjectorApi {
 
-    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Component.class, Service.class, Repository.class, Bean.class, Configuration.class);
+    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Singleton.class, Component.class, Service.class, Repository.class, Configuration.class);
 
     /**
      * Tracks which {@link Application @Application}-annotated classes
