@@ -10,9 +10,7 @@ import io.github.trae.di.annotations.type.DependsOn;
 import io.github.trae.di.annotations.type.Order;
 import io.github.trae.di.annotations.type.Scan;
 import io.github.trae.di.annotations.type.SoftDependency;
-import io.github.trae.di.annotations.type.component.Component;
 import io.github.trae.di.annotations.type.component.Repository;
-import io.github.trae.di.annotations.type.component.Service;
 import io.github.trae.di.annotations.type.component.Singleton;
 import io.github.trae.di.configuration.annotations.Configuration;
 import io.github.trae.di.containers.ComponentContainer;
@@ -51,40 +49,40 @@ import java.util.function.Consumer;
  * <p>Manages the full application lifecycle across one or more
  * {@link Application @Application}-annotated applications:</p>
  * <ol>
- *   <li>Application resolution — reads {@link Application @Application}
+ *   <li>Application resolution: reads {@link Application @Application}
  *       annotations and topologically sorts the dependency tree so
  *       upstream applications are initialized before downstream ones.</li>
- *   <li>Classpath scanning — resolves the {@link Scan @Scan} base packages
+ *   <li>Classpath scanning: resolves the {@link Scan @Scan} base packages
  *       for each application by walking its class hierarchy, then discovers
- *       {@link Component @Component} classes within those packages and
+ *       {@link Singleton @Singleton} classes within those packages and
  *       validates they are concrete types. Applications already initialized
  *       are skipped. Components annotated with {@link SoftDependency @SoftDependency}
  *       are skipped if any of their required packages are not present on the
  *       runtime classpath. Custom stereotype annotations meta-annotated with
- *       {@code @Component}, {@code @Service}, or {@code @Configuration} are
- *       automatically discovered without any additional registration.</li>
- *   <li>Sorting — orders components by {@link DependsOn @DependsOn}
+ *       {@code @Singleton} or {@code @Configuration} are automatically
+ *       discovered without any additional registration.</li>
+ *   <li>Sorting: orders components by {@link DependsOn @DependsOn}
  *       constraints, then {@link Order @Order} priority, then any registered
  *       {@link io.github.trae.di.sorters.comparators.ComponentComparator ComponentComparators}.</li>
- *   <li>Configuration — resolves all {@link Configuration @Configuration}
+ *   <li>Configuration: resolves all {@link Configuration @Configuration}
  *       classes first so they are available before any component constructor runs.</li>
- *   <li>Construction — instantiates each component via
+ *   <li>Construction: instantiates each component via
  *       {@link ConstructorResolver}, resolving constructor dependencies.</li>
- *   <li>Field injection — injects {@link Inject @Inject} fields via
+ *   <li>Field injection: injects {@link Inject @Inject} fields via
  *       {@link FieldResolver}.</li>
- *   <li>{@link PostConstruct @PostConstruct} — per-component initialization
+ *   <li>{@link PostConstruct @PostConstruct}: per-component initialization
  *       after all fields are injected.</li>
- *   <li>Cache warming — builds the assignable-type lookup cache.</li>
- *   <li>{@link ApplicationReady @ApplicationReady} — fired once the
+ *   <li>Cache warming: builds the assignable-type lookup cache.</li>
+ *   <li>{@link ApplicationReady @ApplicationReady}: fired once the
  *       container is fully wired and cached.</li>
  * </ol>
  *
- * <p>The container is additive — each call to {@link #initialize(Class)}
+ * <p>The container is additive, so each call to {@link #initialize(Class)}
  * adds new components on top of any previously initialized applications.
  * This allows independent plugins to boot in sequence via their own
  * {@code onEnable()} while sharing a single container.</p>
  *
- * <p>Shutdown is scoped per application — {@link #shutdown(Class)} only
+ * <p>Shutdown is scoped per application, so {@link #shutdown(Class)} only
  * tears down the components belonging to that specific application.
  * Components are destroyed in reverse initialization order so that
  * children are torn down before their parents.
@@ -94,7 +92,7 @@ import java.util.function.Consumer;
  */
 public class InjectorApi {
 
-    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Singleton.class, Component.class, Service.class, Repository.class, Configuration.class);
+    private static final List<Class<? extends Annotation>> ANNOTATION_CLASS_LIST = List.of(Singleton.class, Repository.class, Configuration.class);
 
     /**
      * Tracks which {@link Application @Application}-annotated classes
@@ -112,7 +110,7 @@ public class InjectorApi {
 
     /**
      * The component classes resolved from {@link io.github.trae.di.annotations.type.Scan @Scan}
-     * system packages — framework and library components that are shared
+     * system packages: framework and library components that are shared
      * across all applications rather than owned by any single one.
      *
      * <p>System components are registered once, by the first application to
@@ -452,7 +450,7 @@ public class InjectorApi {
      * @throws InjectorException if the root class is not annotated,
      *                           a circular application dependency is detected,
      *                           or a non-concrete type is annotated with
-     *                           {@link Component @Component}
+     *                           {@link Singleton @Singleton}
      */
     public static void initialize(final Class<?> rootClass) {
         if (rootClass == null) {
@@ -476,7 +474,7 @@ public class InjectorApi {
      * @throws InjectorException if the instance's class is not annotated,
      *                           a circular application dependency is detected,
      *                           or a non-concrete type is annotated with
-     *                           {@link Component @Component}
+     *                           {@link Singleton @Singleton}
      */
     public static void initialize(final Object rootInstance) {
         if (rootInstance == null) {
@@ -531,7 +529,7 @@ public class InjectorApi {
             final List<Class<?>> systemScannedComponentClassList = scanSystemComponents(applicationClass);
             final List<Class<?>> applicationScannedComponentClassList = scanComponents(applicationClass.getPackageName());
 
-            // Register system components first — shared across all applications,
+            // Register system components first, shared across all applications,
             // owned by the container. Only the first application to reach a
             // given package registers it; later applications reuse it.
             for (final Class<?> type : ComponentSorter.sort(systemScannedComponentClassList)) {
@@ -565,7 +563,7 @@ public class InjectorApi {
         final ConstructorResolver constructorResolver = new ConstructorResolver(getComponentContainer());
         final FieldResolver fieldResolver = new FieldResolver(getComponentContainer());
 
-        // Pass 1 — resolve all @Configuration classes first so they are
+        // Pass 1: resolve all @Configuration classes first so they are
         // available in the container before any component tries to inject them
         for (final Class<?> type : newComponentClassList) {
             if (getComponentContainer().isInstance(type)) {
@@ -583,7 +581,7 @@ public class InjectorApi {
             }
         }
 
-        // Pass 2 — construct all remaining components with dependencies resolved
+        // Pass 2: construct all remaining components with dependencies resolved
         for (final Class<?> type : newComponentClassList) {
             if (getComponentContainer().isInstance(type)) {
                 continue;
@@ -702,7 +700,7 @@ public class InjectorApi {
         }
 
         if (initializedApplicationSet.isEmpty()) {
-            // Last application — tear down the shared system components before
+            // Last application, tear down the shared system components before
             // clearing the container, in reverse registration order.
             final List<Class<?>> systemShutdownClassList = new ArrayList<>(systemComponentClassList);
 
@@ -765,8 +763,8 @@ public class InjectorApi {
 
     /**
      * Returns the singleton instance of the given component type from
-     * the shared container. Works across all initialized applications —
-     * any application can retrieve any component regardless of which
+     * the shared container. Works across all initialized applications,
+     * so any application can retrieve any component regardless of which
      * application registered it.
      *
      * @param type the component class to look up
@@ -981,7 +979,7 @@ public class InjectorApi {
      * specified application. The consumer is invoked immediately for
      * each of the application's component instances.
      *
-     * <p>This is the primary mechanism for platform integration — use
+     * <p>This is the primary mechanism for platform integration. Use
      * it after {@link #initialize(Class)} to register components with
      * external systems, and before {@link #shutdown(Class)} to
      * unregister them.</p>
@@ -1021,7 +1019,7 @@ public class InjectorApi {
      * rooted at the given class using a depth-first topological sort.
      *
      * <p>The result is ordered so that dependencies appear before the
-     * applications that depend on them — guaranteeing upstream components
+     * applications that depend on them, guaranteeing upstream components
      * are scanned and registered first.</p>
      *
      * @param rootClass the entry point application class
@@ -1112,15 +1110,14 @@ public class InjectorApi {
     }
 
     /**
-     * Checks whether the given type is annotated — directly or via a
-     * meta-annotation — with any annotation in {@link #ANNOTATION_CLASS_LIST}.
+     * Checks whether the given type is annotated, directly or via a
+     * meta-annotation, with any annotation in {@link #ANNOTATION_CLASS_LIST}.
      *
      * <p>This walks one level of meta-annotation depth: for each annotation
      * present on the type, its own annotations are checked against the
      * known component annotations. This allows custom stereotype annotations
-     * such as {@code @Repository} (which is meta-annotated with
-     * {@code @Component}) to be automatically discovered without registering
-     * them in the framework.</p>
+     * meta-annotated with {@code @Singleton} to be automatically discovered
+     * without registering them in the framework.</p>
      *
      * @param type the class to check
      * @return {@code true} if the type is a component (directly or via meta-annotation)
@@ -1183,7 +1180,7 @@ public class InjectorApi {
      * the application class's superclass and interface hierarchy and collects
      * every declared {@code @Scan} annotation. Each {@code @Scan} package
      * belongs to a framework or library shared across applications, so the
-     * components discovered here are system-scoped — registered once and owned
+     * components discovered here are system-scoped: registered once and owned
      * by the container, not by the booting application. The application's own
      * package is not scanned here; it is scanned separately as
      * application-scoped via {@link #scanComponents(String)}.</p>
@@ -1219,33 +1216,32 @@ public class InjectorApi {
 
     /**
      * Scans the given package for classes annotated with any known component
-     * annotation — either directly ({@link Component @Component},
-     * {@link Service @Service}, {@link Configuration @Configuration}) or via
-     * a meta-annotation (e.g. {@code @Repository} which is itself annotated
-     * with {@code @Component}).
+     * annotation, either directly ({@link Singleton @Singleton},
+     * {@link Repository @Repository}, {@link Configuration @Configuration}) or
+     * via a meta-annotation (a custom stereotype that is itself annotated with
+     * {@code @Singleton}).
      *
      * <p>Discovery is performed in two passes:</p>
      * <ol>
-     *   <li><b>Direct annotations</b> — uses
+     *   <li><b>Direct annotations</b>: uses
      *       {@link Reflections#getTypesAnnotatedWith(Class, boolean)} for each
      *       annotation in {@link #ANNOTATION_CLASS_LIST}. This catches all
-     *       classes directly annotated with {@code @Component},
-     *       {@code @Service}, or {@code @Configuration}.</li>
-     *   <li><b>Meta-annotations</b> — iterates the raw
+     *       classes directly annotated with {@code @Singleton},
+     *       {@code @Repository}, or {@code @Configuration}.</li>
+     *   <li><b>Meta-annotations</b>: iterates the raw
      *       {@link Scanners#TypesAnnotated} store values to retrieve every
      *       annotated class name indexed within the scanned package. Each
      *       class is loaded using the classloader from a class already
      *       resolved by pass 1 (so that isolated plugin classloaders are
      *       honoured), and checked via {@link #isComponentAnnotated(Class)}
      *       which walks one level of meta-annotation depth. This catches
-     *       classes annotated with custom stereotype annotations (e.g.
-     *       {@code @Repository}) whose annotation type lives <em>outside</em>
-     *       the scanned package but is itself meta-annotated with a known
-     *       component annotation. Classes already discovered by pass 1 are
-     *       skipped.</li>
+     *       classes annotated with custom stereotype annotations whose
+     *       annotation type lives <em>outside</em> the scanned package but is
+     *       itself meta-annotated with a known component annotation. Classes
+     *       already discovered by pass 1 are skipped.</li>
      * </ol>
      *
-     * <p>Only concrete classes are accepted — interfaces, abstract classes,
+     * <p>Only concrete classes are accepted: interfaces, abstract classes,
      * enums, records, and annotations are silently skipped or rejected.
      * Components annotated with {@link SoftDependency @SoftDependency} are
      * skipped if any of their required packages are not found on the runtime
@@ -1264,7 +1260,7 @@ public class InjectorApi {
         final Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
 
         final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), set -> {
-            // Pass 1 — direct annotations (original proven behavior)
+            // Pass 1: direct annotations (original proven behavior)
             for (final Class<? extends Annotation> clazz : ANNOTATION_CLASS_LIST) {
                 set.addAll(reflections.getTypesAnnotatedWith(clazz, false));
             }
@@ -1276,9 +1272,9 @@ public class InjectorApi {
                     ? Thread.currentThread().getContextClassLoader()
                     : set.iterator().next().getClassLoader();
 
-            // Pass 2 — meta-annotations: iterate the raw TypesAnnotated store
+            // Pass 2: meta-annotations, iterate the raw TypesAnnotated store
             // values (annotated class names) and check if any carry a
-            // meta-annotated stereotype (e.g. @Repository -> @Component).
+            // meta-annotated stereotype (e.g. @Repository -> @Singleton).
             final Map<String, Set<String>> store = reflections.getStore().getOrDefault(Scanners.TypesAnnotated.index(), Collections.emptyMap());
 
             for (final Set<String> classNameSet : store.values()) {

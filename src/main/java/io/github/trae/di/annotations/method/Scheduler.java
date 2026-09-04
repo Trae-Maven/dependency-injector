@@ -25,11 +25,11 @@ import java.util.concurrent.TimeUnit;
  * of the configured period. For example, a 5-minute period will
  * fire at {@code :00}, {@code :05}, {@code :10}, {@code :15}, etc.
  * regardless of when the application started. {@link #initialDelay()}
- * is ignored in this mode — the first execution is always delayed
+ * is ignored in this mode, so the first execution is always delayed
  * until the next aligned boundary.</p>
  *
  * <pre>{@code
- * @Component
+ * @Singleton
  * public class MetricsService {
  *
  *     // Fires every 30 seconds, aligned to :00 and :30 of each minute
@@ -96,10 +96,11 @@ public @interface Scheduler {
     boolean clock() default false;
 
     /**
-     * When {@code true}, the task runs on the scheduler thread pool.
-     * When {@code false} (the default), the task runs on the calling
-     * thread that triggered registration — i.e. synchronously on the
-     * main thread.
+     * When {@code true}, the task is dispatched through the application's
+     * asynchronous executor. When {@code false} (the default), it is
+     * dispatched through the synchronous executor, typically the platform's
+     * main thread. If no executor is registered for the owning application,
+     * the task runs on the internal scheduler thread pool.
      *
      * @return {@code true} for asynchronous execution
      */

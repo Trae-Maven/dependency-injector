@@ -11,21 +11,22 @@ The framework is designed to be lightweight, fast, and easy to integrate into ex
 ## Features
 
 - Automatic classpath scanning via `@Singleton` with meta-annotation support
+- `@Repository` stereotype for data-access components, meta-annotated with `@Singleton`
 - Hierarchy-aware base package scanning via `@Scan`, resolved across superclasses and interfaces
-- Stereotype annotations `@Service` and `@Repository` for semantic clarity
 - `@Configuration` POJOs with JSON and YAML support, in-place reload and save
 - `@Comment` annotations for injecting human-readable comments into config files
 - Multi-application support via `@Application` with dependency resolution across projects
-- Additive container — each application initializes independently and shares a single container
+- Additive container: each application initializes independently and shares a single container
 - Conditional component registration via `@SoftDependency` for optional runtime dependencies
 - Per-application component callbacks via `executeCallback` for platform integration
+- Runtime enable and disable of individual components
 - Constructor injection with greedy constructor selection
 - Field injection via `@Inject` with full class hierarchy traversal
 - Collection injection (`List`, `Set`) for both constructors and fields
 - Explicit dependency ordering via `@DependsOn` with circular detection
 - Priority-based initialization via `@Order`
 - Composable `ComponentComparator` extension point for external sorting logic
-- Reverse-order shutdown — components are destroyed in the opposite order they were initialized
+- Reverse-order shutdown: components are destroyed in the opposite order they were initialized
 - Scheduled tasks via `@Scheduler` with fixed-rate, clock-aligned, synchronous/asynchronous modes and platform executor hooks
 - Lifecycle callbacks: `@PostConstruct`, `@ApplicationReady`, `@PreDestroy`, `@PostDestroy`
 - Circular dependency detection at both annotation and runtime level
@@ -57,7 +58,7 @@ The following is only needed at compile time for annotation processing:
 
 Dependency Injector includes several internal helper utilities used throughout the framework.
 
-- [Utilities](https://github.com/Trae-Maven/utilities) – Shared helper classes and performance-focused utilities used internally by the framework.
+- [Utilities](https://github.com/Trae-Maven/utilities): Shared helper classes and performance-focused utilities used internally by the framework.
 
 ```xml
 <dependency>
@@ -110,18 +111,11 @@ public class Main {
 }
 ```
 
-Constructor injection is the preferred approach. The container automatically selects the constructor with the most parameters and resolves all dependencies. This works naturally with Lombok's `@AllArgsConstructor`.
+Mark managed classes with `@Singleton`. Constructor injection is the preferred approach. The container automatically selects the constructor with the most parameters and resolves all dependencies. This works naturally with Lombok's `@AllArgsConstructor`.
 
 ```java
 @AllArgsConstructor
-@Repository
-public class UserRepository {
-
-    private final DatabaseService databaseService;
-}
-
-@AllArgsConstructor
-@Service
+@Singleton
 public class UserService {
 
     private final UserRepository userRepository;
@@ -151,7 +145,7 @@ public class UserService {
 Field injection via `@Inject` is also supported for cases where constructor injection is not practical. Injected fields must not be declared `final`, as they are assigned reflectively after construction.
 
 ```java
-@Service
+@Singleton
 public class OrderService {
 
     @Inject
@@ -162,9 +156,32 @@ public class OrderService {
 }
 ```
 
+### Repositories
+
+`@Repository` marks data-access components. It is meta-annotated with `@Singleton`, so it behaves identically to a plain `@Singleton` and exists purely to distinguish the persistence layer from general-purpose components.
+
+```java
+@AllArgsConstructor
+@Repository
+public class UserRepository {
+
+    private final DatabaseService databaseService;
+}
+```
+
+Any custom annotation meta-annotated with `@Singleton` is discovered the same way, with no registration required:
+
+```java
+@Singleton
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+public @interface Handler {
+}
+```
+
 ### Configuration
 
-Use `@Configuration` to define config POJOs that are automatically loaded, injected, and support in-place reload. No base class is required — any POJO works. Field names are used directly as keys — static and transient fields are ignored.
+Use `@Configuration` to define config POJOs that are automatically loaded, injected, and support in-place reload. No base class is required, any POJO works. Field names are used directly as keys, and static and transient fields are ignored.
 
 JSON is the default format. Use `ConfigType.YAML` for YAML:
 
@@ -173,20 +190,20 @@ JSON is the default format. Use `ConfigType.YAML` for YAML:
 @Configuration(value = "database", type = ConfigType.YAML)  // YAML
 ```
 
-Set the configuration directory before initialization:
+Set the configuration directory for the application before initialization. The directory is registered per application, so each one resolves its config files independently:
 
 ```java
 @Application
 public class Main {
 
     public static void main(final String[] args) {
-        InjectorApi.setConfigurationDirectory(Path.of("configs"));
+        InjectorApi.setConfigurationDirectory(Main.class, Path.of("configs"));
         InjectorApi.initialize(Main.class);
     }
 }
 ```
 
-Define a config class — field defaults become the initial file values:
+Define a config class, where field defaults become the initial file values:
 
 ```java
 @AllArgsConstructor
@@ -227,7 +244,7 @@ debugMode: false
 
 #### Config Comments
 
-Use `@Comment` to add descriptive comments above fields in the generated config files. Comments are injected on every save and initial creation. Supported for both JSON and YAML formats. Multi-line comments are supported via string arrays — each entry becomes a separate comment line.
+Use `@Comment` to add descriptive comments above fields in the generated config files. Comments are injected on every save and initial creation. Supported for both JSON and YAML formats. Multi-line comments are supported via string arrays, where each entry becomes a separate comment line.
 
 ```java
 @AllArgsConstructor
@@ -291,7 +308,7 @@ Config instances are registered into the container and injectable like any other
 
 ```java
 @AllArgsConstructor
-@Service
+@Singleton
 public class DatabaseService {
 
     private final DatabaseConfig databaseConfig;
@@ -309,6 +326,9 @@ Reload and save operations are handled centrally via `InjectorApi`. The existing
 // Reload a single config from disk
 InjectorApi.reloadConfiguration(DatabaseConfig.class);
 
+// Reload every config belonging to one application
+InjectorApi.reloadConfigurations(CorePlugin.class);
+
 // Reload all configs from disk
 InjectorApi.reloadConfigurations();
 
@@ -316,9 +336,42 @@ InjectorApi.reloadConfigurations();
 InjectorApi.saveConfiguration(DatabaseConfig.class);
 ```
 
+The registered config classes can be listed globally or per application:
+
+```java
+final List<Class<?>> allConfigs = InjectorApi.getConfigurationsClasses();
+final List<Class<?>> coreConfigs = InjectorApi.getConfigurationsClasses(CorePlugin.class);
+```
+
+### Container Access
+
+Components are normally wired by injection, but the container can also be queried directly. `get` returns a single instance by its concrete type, and `getAll` returns every registered instance assignable to the given type, using the assignable-type cache built during initialization:
+
+```java
+final UserService userService = InjectorApi.get(UserService.class);
+final List<PaymentHandler> paymentHandlers = InjectorApi.getAll(PaymentHandler.class);
+```
+
+Lookups span every initialized application, so any application can retrieve any component regardless of which one registered it.
+
+### Enabling and Disabling Components
+
+Components are enabled by default. Use `setComponentEnabled` to toggle one at runtime, either by naming the owning application or by letting the framework resolve it:
+
+```java
+InjectorApi.setComponentEnabled(CorePlugin.class, MetricsService.class, false);
+InjectorApi.setComponentEnabled(MetricsService.class, false);
+
+if (InjectorApi.isComponentEnabled(MetricsService.class)) {
+    // ...
+}
+```
+
+Disabled state is tracked per application and cleared when that application shuts down.
+
 ### Multi-Application
 
-Multiple applications can share a single container. Declare upstream dependencies with `@Application(dependencies = ...)` and each application initializes independently. The container is additive — downstream applications can inject components from any upstream application.
+Multiple applications can share a single container. Declare upstream dependencies with `@Application(dependencies = ...)` and each application initializes independently. The container is additive, so downstream applications can inject components from any upstream application.
 
 ```java
 // Core project
@@ -336,7 +389,7 @@ public class CorePlugin extends JavaPlugin {
     }
 }
 
-// Factions project — depends on Core
+// Factions project, depends on Core
 @Application(dependencies = CorePlugin.class)
 public class FactionsPlugin extends JavaPlugin {
 
@@ -352,6 +405,8 @@ public class FactionsPlugin extends JavaPlugin {
 }
 ```
 
+Passing the instance to `initialize` registers it in the container, so the plugin itself becomes injectable. Use `initialize(Class)` instead when the application class is only needed for scanning.
+
 Components in Factions can inject components from Core via constructor or field injection:
 
 ```java
@@ -365,9 +420,9 @@ public class FactionManager {
 
 ### Soft Dependencies
 
-Use `@SoftDependency` to conditionally register a component based on whether an external library is present on the runtime classpath. If any of the specified packages are not found, the component is skipped entirely — it is never registered, constructed, or injected.
+Use `@SoftDependency` to conditionally register a component based on whether an external library is present on the runtime classpath. If any of the specified packages are not found, the component is skipped entirely and is never registered, constructed, or injected.
 
-No Maven dependency is required — the check is purely at runtime against whatever JARs are loaded on the classpath.
+No Maven dependency is required, since the check is purely at runtime against whatever JARs are loaded on the classpath.
 
 ```java
 @SoftDependency("com.stripe.api")
@@ -375,7 +430,7 @@ No Maven dependency is required — the check is purely at runtime against whate
 public class StripePaymentService {}
 ```
 
-Multiple packages can be specified — all must be present for the component to be registered:
+Multiple packages can be specified, and all must be present for the component to be registered:
 
 ```java
 @SoftDependency({"com.rabbitmq.client", "io.lettuce.core"})
@@ -385,9 +440,9 @@ public class MessageBrokerAdapter {}
 
 ### Package Scanning
 
-An application's own package is always scanned — the package of the `@Application` class is included automatically, with no annotation required. Use `@Scan` to contribute *additional* base packages on top of that. The annotation can be placed anywhere in the application class's hierarchy — on a superclass or on an implemented interface — and the framework walks the full superclass and interface graph of the application class, collecting every `@Scan` it finds. The effective scan set is the application's own package plus the union of all `@Scan` declarations reachable through the hierarchy.
+An application's own package is always scanned: the package of the `@Application` class is included automatically, with no annotation required. Use `@Scan` to contribute *additional* base packages on top of that. The annotation can be placed anywhere in the application class's hierarchy, on a superclass or on an implemented interface, and the framework walks the full superclass and interface graph of the application class, collecting every `@Scan` it finds. The effective scan set is the application's own package plus the union of all `@Scan` declarations reachable through the hierarchy.
 
-This lets each layer of a framework declare the package it owns, so its components are discovered automatically by any application built on top of it. An application never declares scanning for the frameworks it builds on — implementing the interface or extending the base class is enough — and it never declares scanning for itself either.
+This lets each layer of a framework declare the package it owns, so its components are discovered automatically by any application built on top of it. An application never declares scanning for the frameworks it builds on, since implementing the interface or extending the base class is enough, and it never declares scanning for itself either.
 
 A framework layer declares the package it owns on its own base type:
 
@@ -409,32 +464,32 @@ public class FactionsPlugin implements Plugin {
 }
 ```
 
-When `@Scan` is given no value, the package of the annotated type itself is scanned. This is the refactor-safe form — moving the type to a different package moves the scanned package with it:
+When `@Scan` is given no value, the package of the annotated type itself is scanned. This is the refactor-safe form: moving the type to a different package moves the scanned package with it:
 
 ```java
 package io.github.trae.hf;
 
 @Scan
 public interface Plugin {
-    // scans io.github.trae.hf — the package this interface lives in
+    // scans io.github.trae.hf, the package this interface lives in
 }
 ```
 
-If no `@Scan` annotation is present anywhere in the hierarchy, only the application's own package is scanned — which is the default for any plain `@Application` class.
+If no `@Scan` annotation is present anywhere in the hierarchy, only the application's own package is scanned, which is the default for any plain `@Application` class.
+
+Components found in `@Scan` packages are system-scoped. They are registered once, by the first application whose hierarchy resolves the package, and are torn down only when the last application shuts down rather than by any individual `shutdown()` call.
 
 ### Component Comparators
 
 Use `ComponentSorter.addComparator(...)` to register custom sorting logic that runs after the default `@DependsOn` and `@Order` phases. This allows external frameworks to influence initialization order without modifying the core DI.
 
 ```java
-ComponentSorter.addComparator((a, b) -> {
-    return Integer.compare(getPriority(a), getPriority(b));
-});
+ComponentSorter.addComparator((a, b) -> Integer.compare(getPriority(a), getPriority(b)));
 
 InjectorApi.initialize(this);
 ```
 
-Comparators are chained in registration order — each one acts as a tiebreaker for the previous phase. This is the mechanism used by the [Hierarchy-Framework](https://github.com/Trae-Maven/hierarchy-framework) to ensure Managers initialize before Modules before SubModules.
+Comparators are chained in registration order, and each one acts as a tiebreaker for the previous phase. This is the mechanism used by the [Hierarchy-Framework](https://github.com/Trae-Maven/hierarchy-framework) to ensure Managers initialize before Modules before SubModules.
 
 ### Execute Callback
 
@@ -513,7 +568,7 @@ public class FactionsPlugin extends SpigotPlugin {}
 
 ### Scheduled Tasks
 
-Use `@Scheduler` to mark a no-argument method as a repeating task. The method is registered after the container is fully wired and continues to execute until the owning application is shut down. Each application manages its own scheduled tasks independently — shutting down one application does not affect another's schedulers.
+Use `@Scheduler` to mark a no-argument method as a repeating task. The method is registered after the container is fully wired and continues to execute until the owning application is shut down. Each application manages its own scheduled tasks independently, so shutting down one application does not affect another's schedulers.
 
 ```java
 @Singleton
@@ -528,7 +583,7 @@ public class MetricsService {
 
 #### Initial Delay
 
-Use `initialDelay` to control how long the task waits before its first execution. If not set, it defaults to `period` — so the first tick fires one full interval after registration:
+Use `initialDelay` to control how long the task waits before its first execution. If not set, it defaults to `period`, so the first tick fires one full interval after registration:
 
 ```java
 @Scheduler(initialDelay = 5, period = 30, unit = TimeUnit.SECONDS)
@@ -590,7 +645,7 @@ public class AnalyticsService {
 
 #### Platform Executors
 
-Use `InjectorApi.setSynchronousExecutor(...)` and `InjectorApi.setAsynchronousExecutor(...)` to hook into the platform's threading model. Set these before `initialize()`:
+Use `InjectorApi.setSynchronousExecutor(...)` and `InjectorApi.setAsynchronousExecutor(...)` to hook into the platform's threading model. Both are registered per application and must be set before `initialize()`:
 
 ```java
 @Application
@@ -598,8 +653,8 @@ public class CorePlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        InjectorApi.setSynchronousExecutor(runnable -> Bukkit.getScheduler().runTask(this, runnable));
-        InjectorApi.setAsynchronousExecutor(runnable -> Bukkit.getScheduler().runTaskAsynchronously(this, runnable));
+        InjectorApi.setSynchronousExecutor(CorePlugin.class, runnable -> Bukkit.getScheduler().runTask(this, runnable));
+        InjectorApi.setAsynchronousExecutor(CorePlugin.class, runnable -> Bukkit.getScheduler().runTaskAsynchronously(this, runnable));
         InjectorApi.initialize(this);
     }
 
@@ -610,7 +665,13 @@ public class CorePlugin extends JavaPlugin {
 }
 ```
 
-If neither executor is set, all tasks run on the internal `di-scheduler` daemon thread pool — no platform integration required. This makes the framework usable outside game platforms (e.g. standalone Spring Boot applications) without setting either hook.
+If neither executor is registered for an application, its tasks run on the internal `di-scheduler` daemon thread pool, with no platform integration required. This makes the framework usable outside game platforms (e.g. standalone Spring Boot applications) without setting either hook.
+
+To share a custom thread pool across every application instead of letting the framework create one, set it before `initialize()`:
+
+```java
+InjectorApi.setScheduledExecutorService(Executors.newScheduledThreadPool(4));
+```
 
 A single component can have multiple scheduled methods with different intervals and modes:
 
@@ -630,11 +691,11 @@ public class MonitoringService {
 }
 ```
 
-The backing thread pool is lazily initialized — no threads are allocated if an application has no `@Scheduler` methods. During shutdown, all scheduled tasks are cancelled before `@PreDestroy` methods are invoked.
+The backing thread pool is lazily initialized, so no threads are allocated if an application has no `@Scheduler` methods. During shutdown, all scheduled tasks are cancelled before `@PreDestroy` methods are invoked.
 
 ### Initialization and Shutdown Order
 
-During initialization, components are constructed and wired in sorted order — dependencies first, then priority, then any registered comparators. During shutdown, components are destroyed in the reverse of their initialization order so that children are torn down before their parents.
+During initialization, components are constructed and wired in sorted order: dependencies first, then priority, then any registered comparators. During shutdown, components are destroyed in the reverse of their initialization order so that children are torn down before their parents.
 
 Use `InjectorApi.getComponentClassListByApplication(...)` to retrieve the component classes registered by a specific application:
 
@@ -651,9 +712,8 @@ final List<Class<?>> factionsComponents = InjectorApi.getComponentClassListByApp
 |---|---|---|
 | `@Application` | Class | Marks a class as an application entry point with optional dependencies |
 | `@Singleton` | Class | Marks a class as a managed singleton |
+| `@Repository` | Class | Stereotype for data-access components, meta-annotated with `@Singleton` |
 | `@Scan` | Class / Interface | Declares base packages to scan, resolved across the application's superclass and interface hierarchy |
-| `@Service` | Class | Stereotype for service-layer components |
-| `@Repository` | Class | Stereotype for data-access components |
 | `@Configuration` | Class | Marks a class as a config POJO with JSON/YAML support, in-place reload and save |
 | `@Comment` | Field | Adds comment lines above the field in the serialized config file |
 | `@SoftDependency` | Class | Conditionally registers a component based on runtime classpath availability |

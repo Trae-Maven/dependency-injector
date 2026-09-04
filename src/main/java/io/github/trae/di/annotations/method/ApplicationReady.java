@@ -7,7 +7,7 @@ import java.lang.annotation.Target;
 
 /**
  * Invoked once all components have been constructed, injected, and
- * post-constructed — signalling that the application is fully ready.
+ * post-constructed, signalling that the application is fully ready.
  *
  * <p>The annotated method must accept no parameters. Unlike
  * {@link PostConstruct}, which fires per-component during initialization,
@@ -16,7 +16,7 @@ import java.lang.annotation.Target;
  * to be available.</p>
  *
  * <pre>{@code
- * @Component
+ * @Singleton
  * public class HealthMonitor {
  *
  *     @ApplicationReady

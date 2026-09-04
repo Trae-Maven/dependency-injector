@@ -11,24 +11,24 @@ import java.lang.annotation.Target;
  *
  * <p>During classpath scanning, if any of the specified packages
  * cannot be found at runtime, the annotated component is skipped
- * entirely — it is never registered, constructed, or injected.</p>
+ * entirely and is never registered, constructed, or injected.</p>
  *
  * <p>This is intended for adapting to optional external libraries
  * that are not part of the project's own dependency tree. No Maven
- * dependency is required — the check is purely at runtime against
+ * dependency is required, since the check is purely at runtime against
  * whatever JARs are loaded on the classpath.</p>
  *
- * <p>Multiple packages can be specified — all must be present for
+ * <p>Multiple packages can be specified, and all must be present for
  * the component to be registered.</p>
  *
  * <pre>{@code
  * @SoftDependency("com.stripe.api")
- * @Component
+ * @Singleton
  * public class StripePaymentService {
  * }
  * }</pre>
  *
- * @see io.github.trae.di.annotations.type.component.Component
+ * @see io.github.trae.di.annotations.type.component.Singleton
  * @see io.github.trae.di.InjectorApi
  */
 @Retention(RetentionPolicy.RUNTIME)

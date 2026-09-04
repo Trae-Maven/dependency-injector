@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
  * injection framework.
  *
  * <p>The annotated class's package is used as the base package for
- * classpath scanning. All {@link io.github.trae.di.annotations.type.component.Component @Component}-annotated
+ * classpath scanning. All {@link io.github.trae.di.annotations.type.component.Singleton @Singleton}-annotated
  * classes discovered under that package are registered and managed
  * by the container.</p>
  *

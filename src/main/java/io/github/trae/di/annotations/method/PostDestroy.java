@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  * completion.</p>
  *
  * <pre>{@code
- * @Component
+ * @Singleton
  * public class NativeResourceHandler {
  *
  *     @PostDestroy

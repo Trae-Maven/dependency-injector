@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
  * flushing buffers, or deregistering listeners.</p>
  *
  * <pre>{@code
- * @Component
+ * @Singleton
  * public class DatabaseService {
  *
  *     @PreDestroy

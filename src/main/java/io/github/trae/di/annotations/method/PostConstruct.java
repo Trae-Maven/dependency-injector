@@ -18,7 +18,7 @@ import java.lang.annotation.Target;
  *
  * <pre>{@code
  * @AllArgsConstructor
- * @Component
+ * @Singleton
  * public class CacheService {
  *
  *     private final DatabaseService databaseService;
