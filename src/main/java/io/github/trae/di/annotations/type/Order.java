@@ -35,5 +35,10 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface Order {
 
+    /**
+     * The initialization priority, where a lower value is initialized earlier.
+     *
+     * @return the priority value
+     */
     int value() default 0;
 }

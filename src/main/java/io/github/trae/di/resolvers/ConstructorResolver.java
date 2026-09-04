@@ -34,6 +34,12 @@ public class ConstructorResolver extends AbstractResolver implements IConstructo
      */
     private final Set<Class<?>> resolvingSet = new HashSet<>();
 
+    /**
+     * Creates a new resolver and wires it to its own {@link DependencyResolver},
+     * so dependencies that have not yet been built can be constructed on demand.
+     *
+     * @param componentContainer the container to resolve and register instances against
+     */
     public ConstructorResolver(final ComponentContainer componentContainer) {
         super(componentContainer);
 

@@ -12,6 +12,9 @@ import java.lang.annotation.Target;
  * container with a single instance created and shared for the lifetime of the
  * container.</p>
  *
+ * <p>Custom stereotype annotations meta-annotated with {@code @Singleton} are
+ * discovered the same way, with no registration required.</p>
+ *
  * <pre>{@code
  * @Singleton
  * public class UserService {
@@ -19,7 +22,7 @@ import java.lang.annotation.Target;
  * }
  * }</pre>
  *
- * @see Component
+ * @see Repository
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)

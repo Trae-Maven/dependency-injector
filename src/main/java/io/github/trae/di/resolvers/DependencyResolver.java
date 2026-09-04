@@ -30,6 +30,11 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
 
     private ConstructorResolver constructorResolver;
 
+    /**
+     * Creates a resolver bound to the given container.
+     *
+     * @param componentContainer the container to resolve dependencies from
+     */
     public DependencyResolver(final ComponentContainer componentContainer) {
         super(componentContainer);
     }
@@ -70,7 +75,7 @@ public class DependencyResolver extends AbstractResolver implements IDependencyR
             }
         }
 
-        // Attempt resolution by assignable type — check both built and unbuilt components
+        // Attempt resolution by assignable type, checking both built and unbuilt components
         // directly against the component class list to avoid stale assignable cache entries
         if (this.constructorResolver != null) {
             for (final Class<?> componentClass : this.getComponentContainer().getComponentClassList()) {

@@ -23,6 +23,11 @@ public class FieldResolver extends AbstractResolver implements IFieldResolver {
 
     private final DependencyResolver dependencyResolver;
 
+    /**
+     * Creates a new resolver backed by its own {@link DependencyResolver}.
+     *
+     * @param componentContainer the container to resolve field dependencies from
+     */
     public FieldResolver(final ComponentContainer componentContainer) {
         super(componentContainer);
 

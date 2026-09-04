@@ -28,6 +28,12 @@ public class YamlConfigSerializer implements ConfigSerializer {
     private static final DumperOptions DUMPER_OPTIONS = createDumperOptions();
 
     /**
+     * Creates a serializer using the shared dumper options.
+     */
+    public YamlConfigSerializer() {
+    }
+
+    /**
      * Creates the shared {@link DumperOptions} with block flow style
      * and 2-space indentation.
      *

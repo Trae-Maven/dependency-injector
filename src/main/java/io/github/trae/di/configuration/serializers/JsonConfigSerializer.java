@@ -24,6 +24,12 @@ public class JsonConfigSerializer implements ConfigSerializer {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+    /**
+     * Creates a serializer backed by the shared Gson instance.
+     */
+    public JsonConfigSerializer() {
+    }
+
     @Override
     public <T> T deserialize(final String content, final Class<T> type) {
         return GSON.fromJson(stripComments(content), type);

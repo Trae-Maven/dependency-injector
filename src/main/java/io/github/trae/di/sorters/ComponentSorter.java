@@ -21,13 +21,13 @@ import java.util.Set;
  *
  * <p>Sorting is performed in phases:</p>
  * <ol>
- *   <li>Topological sort based on {@link DependsOn} — guarantees that
+ *   <li>Topological sort based on {@link DependsOn}, which guarantees that
  *       dependencies are initialized before the components that require them.
  *       Circular references are detected and rejected.</li>
- *   <li>Stable sort by {@link Order} value — lower values are initialized
+ *   <li>Stable sort by {@link Order} value, where lower values are initialized
  *       first. Components without {@code @Order} default to
  *       {@link Integer#MAX_VALUE}.</li>
- *   <li>Additional {@link ComponentComparator} instances — applied in
+ *   <li>Additional {@link ComponentComparator} instances, applied in
  *       registration order, allowing external frameworks to refine
  *       initialization order after the core sorting phases.</li>
  * </ol>
@@ -35,6 +35,12 @@ import java.util.Set;
 public class ComponentSorter {
 
     private static final Map<Class<? extends ComponentComparator>, ComponentComparator> comparatorMap = new HashMap<>();
+
+    /**
+     * Static utility holder, not intended to be instantiated.
+     */
+    private ComponentSorter() {
+    }
 
     /**
      * Registers an additional comparator to be applied after the
@@ -92,7 +98,7 @@ public class ComponentSorter {
      * built from {@link DependsOn} annotations. Dependencies are placed
      * before the components that declare them.
      *
-     * <p>Supports interface and superclass references in {@code @DependsOn} —
+     * <p>Supports interface and superclass references in {@code @DependsOn}:
      * if the declared dependency is an interface or abstract class, it resolves
      * to the first registered component that implements or extends it.</p>
      *

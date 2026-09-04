@@ -36,6 +36,12 @@ public class ComponentContainer implements IComponentContainer {
     private final ConcurrentHashMap<Class<?>, List<Object>> assignableInstanceCacheMap = new ConcurrentHashMap<>();
 
     /**
+     * Creates an empty container.
+     */
+    public ComponentContainer() {
+    }
+
+    /**
      * Returns an immutable snapshot of all registered instances.
      */
     @Override
@@ -48,7 +54,7 @@ public class ComponentContainer implements IComponentContainer {
      *
      * @param type     the concrete class to register under
      * @param instance the singleton instance
-     * @throws ComponentException if either argument is null
+     * @throws IllegalArgumentException if either argument is null
      */
     @Override
     public void registerInstance(final Class<?> type, final Object instance) {
@@ -67,7 +73,7 @@ public class ComponentContainer implements IComponentContainer {
      * Removes the singleton instance registered under the given type.
      *
      * @param type the concrete class to unregister
-     * @throws ComponentException if the type is null
+     * @throws IllegalArgumentException if the type is null
      */
     @Override
     public void unregisterInstance(final Class<?> type) {
@@ -82,7 +88,8 @@ public class ComponentContainer implements IComponentContainer {
      * Returns the instance registered under the exact type.
      *
      * @param type the concrete class to look up
-     * @throws ComponentException if the type is null or not registered
+     * @throws IllegalArgumentException if the type is null
+     * @throws ComponentException       if no instance is registered for the type
      */
     @Override
     public <T> T getInstance(final Class<T> type) {
@@ -102,7 +109,7 @@ public class ComponentContainer implements IComponentContainer {
      * Checks whether an instance is registered under the exact type.
      *
      * @param type the concrete class to check
-     * @throws ComponentException if the type is null
+     * @throws IllegalArgumentException if the type is null
      */
     @Override
     public boolean isInstance(final Class<?> type) {
@@ -119,7 +126,7 @@ public class ComponentContainer implements IComponentContainer {
      * on first access after {@link #buildCache()} has been called.
      *
      * @param type the interface or superclass to match against
-     * @throws ComponentException if the type is null
+     * @throws IllegalArgumentException if the type is null
      */
     @SuppressWarnings("unchecked")
     @Override
@@ -154,7 +161,7 @@ public class ComponentContainer implements IComponentContainer {
      * Registers a component class for tracking. Does not create an instance.
      *
      * @param clazz the component class to register
-     * @throws ComponentException if the class is null
+     * @throws IllegalArgumentException if the class is null
      */
     @Override
     public void registerComponentClass(final Class<?> clazz) {
@@ -169,7 +176,7 @@ public class ComponentContainer implements IComponentContainer {
      * Removes a component class from tracking.
      *
      * @param clazz the component class to unregister
-     * @throws ComponentException if the class is null
+     * @throws IllegalArgumentException if the class is null
      */
     @Override
     public void unregisterComponentClass(final Class<?> clazz) {

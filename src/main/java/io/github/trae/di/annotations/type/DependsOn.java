@@ -25,5 +25,11 @@ import java.lang.annotation.Target;
 @Inherited
 public @interface DependsOn {
 
+    /**
+     * The component classes that must be constructed before the annotated
+     * component. Every class listed must itself be a registered component.
+     *
+     * @return the upstream component classes
+     */
     Class<?>[] values();
 }

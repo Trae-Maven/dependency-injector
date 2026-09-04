@@ -8,10 +8,10 @@ import java.lang.annotation.Target;
 /**
  * Specialization of {@link Singleton} for repository classes.
  *
- * <p>Functionally identical to {@code @Singleton}, which it is meta-annotated
- * with. Use this stereotype to semantically mark classes in the data-access
- * layer, those responsible for persisting and retrieving domain objects from
- * a backing store, distinguishing them from general-purpose components.</p>
+ * <p>Functionally identical to {@code @Singleton}. Use this stereotype to
+ * semantically mark classes in the data-access layer, those responsible for
+ * persisting and retrieving domain objects from a backing store,
+ * distinguishing them from general-purpose components.</p>
  *
  * <pre>{@code
  * @Repository
@@ -22,7 +22,6 @@ import java.lang.annotation.Target;
  *
  * @see Singleton
  */
-@Singleton
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface Repository {
