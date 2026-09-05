@@ -114,7 +114,9 @@ public class InjectorApi {
      * across all applications rather than owned by any single one.
      *
      * <p>System components are registered once, by the first application to
-     * boot whose hierarchy resolves the owning package. They are never torn
+     * boot whose hierarchy resolves the owning package, but are visible to
+     * every application through {@link #executeCallback(Class, Consumer)} so
+     * that each platform integration can wire them. They are never torn
      * down by an individual {@link #shutdown(Class)} call; instead they are
      * destroyed only when the last application shuts down and the container
      * is cleared.</p>
@@ -975,14 +977,26 @@ public class InjectorApi {
     }
 
     /**
-     * Executes a callback against all components belonging to the
-     * specified application. The consumer is invoked immediately for
-     * each of the application's component instances.
+     * Executes a callback against every component visible to the specified application: the
+     * system components shared across all applications, followed by the components that
+     * application registered itself.
+     *
+     * <p>System components come first, so a platform registering listeners or commands through
+     * this callback wires the framework's own components before anything that depends on them.
+     * They are included for every application, since a system component belongs to the container
+     * rather than to whichever application happened to resolve its package first, and a platform
+     * integration that skipped them would leave framework listeners constructed but never
+     * registered.</p>
      *
      * <p>This is the primary mechanism for platform integration. Use
      * it after {@link #initialize(Class)} to register components with
      * external systems, and before {@link #shutdown(Class)} to
      * unregister them.</p>
+     *
+     * <p><b>Note:</b> because system components are shared, a callback used for teardown will be
+     * invoked against them once per application shutting down, not once in total. A platform
+     * unregistering shared components this way tears them down for every application still
+     * running.</p>
      *
      * @param applicationClass the {@code @Application}-annotated class
      *                         to scope the callback to
@@ -1001,7 +1015,9 @@ public class InjectorApi {
             throw new InjectorException("Application has not been initialized.");
         }
 
-        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
+        final List<Class<?>> componentClassList = new ArrayList<>(systemComponentClassList);
+
+        componentClassList.addAll(applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList()));
 
         for (final Class<?> componentClass : componentClassList) {
             if (!(getComponentContainer().isInstance(componentClass))) {
