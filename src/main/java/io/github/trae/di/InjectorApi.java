@@ -123,6 +123,32 @@ public class InjectorApi {
      */
     private static final List<Class<?>> systemComponentClassList = new ArrayList<>();
 
+    /**
+     * Maps each system component class to the {@link Application @Application} that first
+     * registered it.
+     *
+     * <p>System components are shared, so without an owner every application booting the same
+     * {@code @Scan} package would run its platform callback against the same instance,
+     * registering one listener or command once per plugin. Ownership makes
+     * {@link #executeCallback(Class, Consumer)} surface each system component to exactly one
+     * application.</p>
+     *
+     * <p>Ownership is transferred when the owning application shuts down while others are still
+     * running, so the shared components it registered do not go dead for the survivors.</p>
+     */
+    private static final LinkedHashMap<Class<?>, Class<?>> systemComponentOwnerMap = new LinkedHashMap<>();
+
+    /**
+     * Maps each {@link Application @Application}-annotated class to the callback that registers
+     * a component with its platform.
+     *
+     * <p>Set via {@link #setComponentRegisterCallback(Class, Consumer)} before
+     * {@link #initialize(Class)}. Used only when system component ownership transfers to a
+     * surviving application, which must re-register the components the departing owner
+     * unregistered.</p>
+     */
+    private static final LinkedHashMap<Class<?>, Consumer<Object>> componentRegisterCallbackMap = new LinkedHashMap<>();
+
     @Getter
     private static ComponentContainer componentContainer;
 
@@ -539,6 +565,7 @@ public class InjectorApi {
                     getComponentContainer().registerComponentClass(type);
                     newComponentClassList.add(type);
                     systemComponentClassList.add(type);
+                    systemComponentOwnerMap.put(type, rootClass);
                 }
             }
 
@@ -694,8 +721,11 @@ public class InjectorApi {
         synchronousExecutorMap.remove(rootClass);
         asynchronousExecutorMap.remove(rootClass);
         disabledComponentMap.remove(rootClass);
+        componentRegisterCallbackMap.remove(rootClass);
 
         getComponentContainer().buildCache();
+
+        transferSystemComponentOwnership(rootClass);
 
         for (final Object instance : instanceList) {
             invokeAnnotatedMethods(instance, PostDestroy.class);
@@ -732,6 +762,8 @@ public class InjectorApi {
             }
 
             systemComponentClassList.clear();
+            systemComponentOwnerMap.clear();
+            componentRegisterCallbackMap.clear();
 
             if (scheduledExecutorService != null) {
                 scheduledExecutorService.shutdown();
@@ -977,26 +1009,18 @@ public class InjectorApi {
     }
 
     /**
-     * Executes a callback against every component visible to the specified application: the
-     * system components shared across all applications, followed by the components that
-     * application registered itself.
+     * Executes a callback against every component this application is responsible for: the system
+     * components it owns, followed by the components it registered itself.
      *
-     * <p>System components come first, so a platform registering listeners or commands through
-     * this callback wires the framework's own components before anything that depends on them.
-     * They are included for every application, since a system component belongs to the container
-     * rather than to whichever application happened to resolve its package first, and a platform
-     * integration that skipped them would leave framework listeners constructed but never
-     * registered.</p>
+     * <p>System components come first, so a platform registering listeners or commands wires the
+     * framework's own components before anything that depends on them. Each is surfaced to exactly
+     * one application, the one that first resolved its {@code @Scan} package, so a second
+     * application booting the same package does not register the shared instance a second time.</p>
      *
      * <p>This is the primary mechanism for platform integration. Use
      * it after {@link #initialize(Class)} to register components with
      * external systems, and before {@link #shutdown(Class)} to
      * unregister them.</p>
-     *
-     * <p><b>Note:</b> because system components are shared, a callback used for teardown will be
-     * invoked against them once per application shutting down, not once in total. A platform
-     * unregistering shared components this way tears them down for every application still
-     * running.</p>
      *
      * @param applicationClass the {@code @Application}-annotated class
      *                         to scope the callback to
@@ -1015,7 +1039,13 @@ public class InjectorApi {
             throw new InjectorException("Application has not been initialized.");
         }
 
-        final List<Class<?>> componentClassList = new ArrayList<>(systemComponentClassList);
+        final List<Class<?>> componentClassList = new ArrayList<>();
+
+        for (final Class<?> systemComponentClass : systemComponentClassList) {
+            if (applicationClass.equals(systemComponentOwnerMap.get(systemComponentClass))) {
+                componentClassList.add(systemComponentClass);
+            }
+        }
 
         componentClassList.addAll(applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList()));
 
@@ -1028,6 +1058,34 @@ public class InjectorApi {
 
             callback.accept(instance);
         }
+    }
+
+    /**
+     * Registers the callback used to register a component with the platform owning the given
+     * {@link Application @Application}-annotated class. Must be called before
+     * {@link #initialize(Class)}.
+     *
+     * <p>This is the same callback a platform passes to {@link #executeCallback(Class, Consumer)}
+     * at startup. It is retained so that system components can be re-registered against a
+     * surviving application when their owner shuts down.</p>
+     *
+     * @param applicationClass          the {@code @Application}-annotated class
+     * @param componentRegisterCallback the callback that registers a component with the platform
+     */
+    public static void setComponentRegisterCallback(final Class<?> applicationClass, final Consumer<Object> componentRegisterCallback) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (componentRegisterCallback == null) {
+            throw new IllegalArgumentException("Component Register Callback cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        componentRegisterCallbackMap.put(applicationClass, componentRegisterCallback);
     }
 
     /**
@@ -1437,5 +1495,62 @@ public class InjectorApi {
         }
 
         return null;
+    }
+
+    /**
+     * Hands every system component owned by a departing application to a surviving one and
+     * re-registers it with that application's platform.
+     *
+     * <p>The departing application unregistered these components from the platform as part of its
+     * own shutdown, but the instances themselves survive in the container until the last
+     * application leaves. Without a transfer the shared listeners, commands, and scheduled tasks
+     * would stay dead for every application still running.</p>
+     *
+     * <p>The first remaining application with a registered callback takes ownership. When none
+     * remains, the ownership entries are dropped and the components are torn down with the
+     * container.</p>
+     *
+     * @param previousOwnerClass the {@code @Application}-annotated class shutting down
+     */
+    private static void transferSystemComponentOwnership(final Class<?> previousOwnerClass) {
+        final List<Class<?>> ownedComponentClassList = new ArrayList<>();
+
+        for (final Map.Entry<Class<?>, Class<?>> entry : systemComponentOwnerMap.entrySet()) {
+            if (previousOwnerClass.equals(entry.getValue())) {
+                ownedComponentClassList.add(entry.getKey());
+            }
+        }
+
+        if (ownedComponentClassList.isEmpty()) {
+            return;
+        }
+
+        final Map.Entry<Class<?>, Consumer<Object>> newOwnerEntry = componentRegisterCallbackMap.entrySet().stream().findFirst().orElse(null);
+
+        if (newOwnerEntry == null) {
+            ownedComponentClassList.forEach(systemComponentOwnerMap::remove);
+            return;
+        }
+
+        final Class<?> newOwnerClass = newOwnerEntry.getKey();
+        final Consumer<Object> newOwnerCallback = newOwnerEntry.getValue();
+
+        final SchedulerResolver schedulerResolver = schedulerResolverMap.get(newOwnerClass);
+
+        for (final Class<?> type : ownedComponentClassList) {
+            systemComponentOwnerMap.put(type, newOwnerClass);
+
+            if (!(getComponentContainer().isInstance(type))) {
+                continue;
+            }
+
+            final Object instance = getComponentContainer().getInstance(type);
+
+            newOwnerCallback.accept(instance);
+
+            if (schedulerResolver != null) {
+                schedulerResolver.register(instance);
+            }
+        }
     }
 }
