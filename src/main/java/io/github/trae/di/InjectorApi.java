@@ -114,9 +114,9 @@ public class InjectorApi {
      * across all applications rather than owned by any single one.
      *
      * <p>System components are registered once, by the first application to
-     * boot whose hierarchy resolves the owning package, but are visible to
-     * every application through {@link #executeCallback(Class, Consumer)} so
-     * that each platform integration can wire them. They are never torn
+     * boot whose hierarchy resolves the owning package, and are surfaced through
+     * {@link #executeCallback(Class, Consumer)} to whichever application owns them,
+     * tracked by {@link #systemComponentOwnerMap}. They are never torn
      * down by an individual {@link #shutdown(Class)} call; instead they are
      * destroyed only when the last application shuts down and the container
      * is cleared.</p>
