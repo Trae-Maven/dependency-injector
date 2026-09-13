@@ -163,6 +163,28 @@ public class InjectorApi {
     private static final LinkedHashMap<Class<?>, Path> configurationDirectoryMap = new LinkedHashMap<>();
 
     /**
+     * Maps each {@link Application @Application}-annotated class to the callback
+     * invoked after one of its {@link Configuration @Configuration} classes
+     * has been explicitly saved.
+     *
+     * <p>The callback receives the configuration class that was saved,
+     * allowing platform integrations to translate configuration saves into
+     * platform-specific events or other lifecycle hooks.</p>
+     */
+    private static final LinkedHashMap<Class<?>, Consumer<Class<?>>> configurationSaveCallbackMap = new LinkedHashMap<>();
+
+    /**
+     * Maps each {@link Application @Application}-annotated class to the callback
+     * invoked after one of its {@link Configuration @Configuration} classes
+     * has been reloaded.
+     *
+     * <p>The callback receives the configuration class that was reloaded,
+     * allowing platform integrations to translate configuration reloads into
+     * platform-specific events or other lifecycle hooks.</p>
+     */
+    private static final LinkedHashMap<Class<?>, Consumer<Class<?>>> configurationReloadCallbackMap = new LinkedHashMap<>();
+
+    /**
      * The shared configuration resolver, created during initialization if
      * a configuration directory is set. Retained so that configurations
      * can be reloaded and saved after initialization.
@@ -273,6 +295,64 @@ public class InjectorApi {
         }
 
         return configurationDirectoryMap.get(applicationClass);
+    }
+
+    /**
+     * Registers the callback invoked after a
+     * {@link Configuration @Configuration}-annotated class belonging to the
+     * given {@link Application @Application} has been explicitly saved.
+     *
+     * <p>The callback receives the configuration class that was saved.
+     * This allows platform integrations to expose configuration saves
+     * through their own event systems without introducing platform-specific
+     * dependencies into the injector.</p>
+     *
+     * @param applicationClass          the {@code @Application}-annotated class
+     * @param configurationSaveCallback the callback invoked after a configuration is saved
+     */
+    public static void setConfigurationSaveCallback(final Class<?> applicationClass, final Consumer<Class<?>> configurationSaveCallback) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (configurationSaveCallback == null) {
+            throw new IllegalArgumentException("Configuration Save Callback cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        configurationSaveCallbackMap.put(applicationClass, configurationSaveCallback);
+    }
+
+    /**
+     * Registers the callback invoked after a
+     * {@link Configuration @Configuration}-annotated class belonging to the
+     * given {@link Application @Application} has been reloaded.
+     *
+     * <p>The callback receives the configuration class that was reloaded.
+     * This allows platform integrations to expose configuration reloads
+     * through their own event systems without introducing platform-specific
+     * dependencies into the injector.</p>
+     *
+     * @param applicationClass            the {@code @Application}-annotated class
+     * @param configurationReloadCallback the callback invoked after a configuration is reloaded
+     */
+    public static void setConfigurationReloadCallback(final Class<?> applicationClass, final Consumer<Class<?>> configurationReloadCallback) {
+        if (applicationClass == null) {
+            throw new IllegalArgumentException("Application Class cannot be null.");
+        }
+
+        if (configurationReloadCallback == null) {
+            throw new IllegalArgumentException("Configuration Reload Callback cannot be null.");
+        }
+
+        if (!(applicationClass.isAnnotationPresent(Application.class))) {
+            throw new InjectorException("Application Class must be annotated with @%s: %s".formatted(Application.class.getSimpleName(), applicationClass.getName()));
+        }
+
+        configurationReloadCallbackMap.put(applicationClass, configurationReloadCallback);
     }
 
     /**
@@ -718,6 +798,8 @@ public class InjectorApi {
         applicationComponentMap.remove(rootClass);
         initializedApplicationSet.remove(rootClass);
         configurationDirectoryMap.remove(rootClass);
+        configurationSaveCallbackMap.remove(rootClass);
+        configurationReloadCallbackMap.remove(rootClass);
         synchronousExecutorMap.remove(rootClass);
         asynchronousExecutorMap.remove(rootClass);
         disabledComponentMap.remove(rootClass);
@@ -773,6 +855,8 @@ public class InjectorApi {
             componentContainer = null;
             configurationResolver = null;
             configurationDirectoryMap.clear();
+            configurationSaveCallbackMap.clear();
+            configurationReloadCallbackMap.clear();
             synchronousExecutorMap.clear();
             asynchronousExecutorMap.clear();
             disabledComponentMap.clear();
@@ -893,6 +977,12 @@ public class InjectorApi {
      * The existing instance in the container is updated in-place, so any
      * component holding a reference will see the new values immediately.
      *
+     * <p>After the configuration has been successfully reloaded, the reload
+     * callback registered for the owning {@link Application @Application}
+     * via {@link #setConfigurationReloadCallback(Class, Consumer)} is invoked
+     * with the reloaded configuration class. If no callback is registered,
+     * no additional action is performed.</p>
+     *
      * @param type the {@code @Configuration}-annotated class to reload
      * @throws InjectorException if the class is not annotated with
      *                           {@code @Configuration}, the configuration
@@ -913,6 +1003,13 @@ public class InjectorApi {
         }
 
         configurationResolver.reload(type);
+
+        final Class<?> applicationClass = resolveOwningApplication(type);
+        final Consumer<Class<?>> callback = configurationReloadCallbackMap.get(applicationClass);
+
+        if (callback != null) {
+            callback.accept(type);
+        }
     }
 
     /**
@@ -920,7 +1017,9 @@ public class InjectorApi {
      * to the specified {@link Application @Application} from disk.
      *
      * <p>Each existing instance is updated in-place, so any component
-     * holding a reference will see the new values immediately.</p>
+     * holding a reference will see the new values immediately. The registered
+     * reload callback is invoked individually after each configuration is
+     * successfully reloaded.</p>
      *
      * @param applicationClass the {@code @Application}-annotated class
      *                         whose configurations should be reloaded
@@ -945,7 +1044,7 @@ public class InjectorApi {
 
         for (final Class<?> type : componentClassList) {
             if (type.isAnnotationPresent(Configuration.class)) {
-                configurationResolver.reload(type);
+                reloadConfiguration(type);
             }
         }
     }
@@ -954,6 +1053,10 @@ public class InjectorApi {
      * Reloads all registered {@link Configuration @Configuration} instances
      * from disk. Each existing instance is updated in-place.
      *
+     * <p>The reload callback registered for each configuration's owning
+     * {@link Application @Application} is invoked individually after that
+     * configuration is successfully reloaded.</p>
+     *
      * @throws InjectorException if the configuration resolver is not initialized
      */
     public static void reloadConfigurations() {
@@ -961,12 +1064,20 @@ public class InjectorApi {
             throw new InjectorException("Configuration resolver has not been initialized.");
         }
 
-        configurationResolver.reloadAll();
+        for (final Class<?> type : getConfigurationsClasses()) {
+            reloadConfiguration(type);
+        }
     }
 
     /**
      * Saves a single {@link Configuration @Configuration} to disk using
      * the format specified by {@link Configuration#type()}.
+     *
+     * <p>After the configuration has been successfully saved, the save
+     * callback registered for the owning {@link Application @Application}
+     * via {@link #setConfigurationSaveCallback(Class, Consumer)} is invoked
+     * with the saved configuration class. If no callback is registered,
+     * no additional action is performed.</p>
      *
      * @param type the {@code @Configuration}-annotated class to save
      * @throws InjectorException if the class is not annotated with
@@ -988,6 +1099,13 @@ public class InjectorApi {
         }
 
         configurationResolver.save(type);
+
+        final Class<?> applicationClass = resolveOwningApplication(type);
+        final Consumer<Class<?>> callback = configurationSaveCallbackMap.get(applicationClass);
+
+        if (callback != null) {
+            callback.accept(type);
+        }
     }
 
     /**
