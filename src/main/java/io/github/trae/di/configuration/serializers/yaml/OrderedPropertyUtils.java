@@ -25,15 +25,15 @@ public class OrderedPropertyUtils extends PropertyUtils {
      * Builds the property set in declaration order, keeping only readable
      * properties that are writable unless read-only properties are allowed.
      *
-     * @param type    the class to introspect
-     * @param bAccess the bean access mode
+     * @param type       the class to introspect
+     * @param beanAccess the bean access mode
      * @return the ordered property set
      */
     @Override
-    protected Set<Property> createPropertySet(final Class<?> type, final BeanAccess bAccess) {
+    protected Set<Property> createPropertySet(final Class<?> type, final BeanAccess beanAccess) {
         final Set<Property> propertySet = new LinkedHashSet<>();
 
-        final Collection<Property> propertyCollection = getPropertiesMap(type, bAccess).values();
+        final Collection<Property> propertyCollection = getPropertiesMap(type, beanAccess).values();
 
         for (final Property property : propertyCollection) {
             if (property.isReadable() && (isAllowReadOnlyProperties() || property.isWritable())) {
