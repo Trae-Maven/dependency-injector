@@ -6,15 +6,20 @@ import io.github.trae.di.configuration.annotations.Comment;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * {@link ConfigSerializer} implementation using Gson for JSON format.
  *
  * <p>Produces pretty-printed JSON with HTML escaping disabled. Fields
  * annotated with {@link Comment @Comment} have their comments injected
- * as {@code //} lines above the corresponding key in the output.</p>
+ * as {@code //} lines above the corresponding key in the output, including
+ * fields of nested configuration types.</p>
  *
  * <p>Note: the resulting output is not strictly valid JSON due to the
  * injected comments, but is human-readable and parsed correctly on
@@ -96,63 +101,186 @@ public class JsonConfigSerializer implements ConfigSerializer {
      * Injects {@link Comment @Comment} annotations as {@code //} comment
      * lines above their corresponding JSON keys.
      *
+     * <p>Keys are matched by their full path from the root, such as
+     * {@code delay.defaultValue}, rather than by name alone, so a nested
+     * field never picks up the comment of a same-named field elsewhere.
+     * The path is tracked with a stack pushed for every line that opens an
+     * object or array and popped for every line that closes one. Anything
+     * opened without a key, the root and array elements, pushes a
+     * {@code null} marker, so keys inside array elements never match.</p>
+     *
      * @param json the serialized JSON string
      * @param type the configuration class to read annotations from
      * @return the JSON string with comments injected
      */
     private static String injectComments(final String json, final Class<?> type) {
-        final Map<String, String[]> commentMap = buildCommentMap(type);
+        final Map<String, String[]> commentMap = new LinkedHashMap<>();
+
+        buildCommentMap(type, "", commentMap, new HashSet<>());
 
         if (commentMap.isEmpty()) {
             return json;
         }
 
         final StringBuilder result = new StringBuilder();
+        final List<String> pathList = new ArrayList<>();
 
         for (final String line : json.split("\n")) {
             final String trimmed = line.trim();
 
-            for (final Map.Entry<String, String[]> entry : commentMap.entrySet()) {
-                if (trimmed.startsWith("\"" + entry.getKey() + "\"")) {
-                    final String indent = line.substring(0, line.indexOf(trimmed));
-                    for (final String commentLine : entry.getValue()) {
+            if (trimmed.startsWith("}") || trimmed.startsWith("]")) {
+                if (!(pathList.isEmpty())) {
+                    pathList.removeLast();
+                }
+
+                result.append(line).append("\n");
+                continue;
+            }
+
+            final String key = getKey(trimmed);
+
+            if (key != null) {
+                final String path = getPath(pathList, key);
+                final String[] comment = path != null ? commentMap.get(path) : null;
+
+                if (comment != null) {
+                    final String indent = line.substring(0, line.length() - line.stripLeading().length());
+
+                    for (final String commentLine : comment) {
                         result.append(indent).append("// ").append(commentLine).append("\n");
                     }
-                    break;
                 }
             }
 
             result.append(line).append("\n");
+
+            if (trimmed.endsWith("{") || trimmed.endsWith("[")) {
+                pathList.add(key);
+            }
         }
 
         return result.toString().stripTrailing() + "\n";
     }
 
     /**
-     * Builds a map of field names to their {@link Comment @Comment} values
-     * by walking the class hierarchy.
+     * Reads the key from a line of pretty-printed JSON.
      *
-     * @param type the class to scan
-     * @return ordered map of field name to comment lines
+     * <p>Gson writes every key as a quoted string immediately followed by a
+     * colon, which is what separates a key from a string element of an
+     * array.</p>
+     *
+     * @param trimmed the line with surrounding whitespace removed
+     * @return the key, or {@code null} when the line holds none
      */
-    private static Map<String, String[]> buildCommentMap(final Class<?> type) {
-        final Map<String, String[]> commentMap = new LinkedHashMap<>();
+    private static String getKey(final String trimmed) {
+        if (!(trimmed.startsWith("\""))) {
+            return null;
+        }
+
+        int index = 1;
+
+        while (index < trimmed.length()) {
+            final char c = trimmed.charAt(index);
+
+            if (c == '\\') {
+                index += 2;
+                continue;
+            }
+
+            if (c == '"') {
+                break;
+            }
+
+            index++;
+        }
+
+        if (index + 1 >= trimmed.length() || trimmed.charAt(index + 1) != ':') {
+            return null;
+        }
+
+        return trimmed.substring(1, index);
+    }
+
+    /**
+     * Joins the open keys and the given key into a dotted path, skipping the
+     * root.
+     *
+     * @param pathList the keys of every open object or array, root first
+     * @param key      the key on the current line
+     * @return the dotted path, or {@code null} when the key sits inside an
+     * array element and so cannot match a field
+     */
+    private static String getPath(final List<String> pathList, final String key) {
+        final StringBuilder path = new StringBuilder();
+
+        for (int i = 1; i < pathList.size(); i++) {
+            final String part = pathList.get(i);
+
+            if (part == null) {
+                return null;
+            }
+
+            path.append(part).append(".");
+        }
+
+        return path.append(key).toString();
+    }
+
+    /**
+     * Builds a map of dotted field paths to their {@link Comment @Comment}
+     * values by walking the class hierarchy, descending into the fields of
+     * nested configuration types.
+     *
+     * <p>A type already being walked on the current branch is not walked
+     * again, so a type that refers to itself cannot recurse forever.</p>
+     *
+     * @param type          the class to scan
+     * @param prefix        the path of the field holding this type, with a
+     *                      trailing dot, or empty for the root
+     * @param commentMap    the map to fill, in declaration order
+     * @param visitingTypes the types being walked on the current branch
+     */
+    private static void buildCommentMap(final Class<?> type, final String prefix, final Map<String, String[]> commentMap, final Set<Class<?>> visitingTypes) {
+        if (!(visitingTypes.add(type))) {
+            return;
+        }
 
         Class<?> clazz = type;
         while (clazz != null && clazz != Object.class) {
             for (final Field field : clazz.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())) {
+                final int modifiers = field.getModifiers();
+
+                if (Modifier.isStatic(modifiers) || Modifier.isTransient(modifiers)) {
                     continue;
                 }
 
                 final Comment comment = field.getAnnotation(Comment.class);
                 if (comment != null) {
-                    commentMap.put(field.getName(), comment.value());
+                    commentMap.put(prefix + field.getName(), comment.value());
+                }
+
+                if (isNestedType(field.getType())) {
+                    buildCommentMap(field.getType(), prefix + field.getName() + ".", commentMap, visitingTypes);
                 }
             }
             clazz = clazz.getSuperclass();
         }
 
-        return commentMap;
+        visitingTypes.remove(type);
+    }
+
+    /**
+     * Whether a field's type is a configuration type of its own, whose fields
+     * are written as a nested object.
+     *
+     * <p>Primitives, arrays, enums, interfaces, abstract types and anything
+     * from the JDK, including strings, numbers, maps and collections, are
+     * written as values rather than walked.</p>
+     *
+     * @param type the field type
+     * @return whether the type is walked for comments
+     */
+    private static boolean isNestedType(final Class<?> type) {
+        return !(type.isPrimitive() || type.isArray() || type.isEnum() || type.isInterface() || Modifier.isAbstract(type.getModifiers()) || type.getName().startsWith("java."));
     }
 }

@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * Entry point for the dependency injection framework.
@@ -928,7 +929,7 @@ public class InjectorApi {
 
     /**
      * Returns all registered {@link Configuration @Configuration} classes
-     * across all initialized applications.
+     * across all initialized applications, system configurations first.
      *
      * @return an unmodifiable list of all configuration classes
      * @throws InjectorException if the configuration resolver has not
@@ -939,12 +940,16 @@ public class InjectorApi {
             throw new InjectorException("Configuration resolver has not been initialized.");
         }
 
-        return applicationComponentMap.values().stream().flatMap(List::stream).filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
+        return Stream.concat(systemComponentClassList.stream(), applicationComponentMap.values().stream().flatMap(List::stream)).filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
     }
 
     /**
      * Returns all {@link Configuration @Configuration} classes belonging
      * to the specified {@link Application @Application}.
+     *
+     * <p>That covers the configurations scanned from the application's own
+     * package and the system configurations it currently owns, system
+     * configurations first.</p>
      *
      * @param applicationClass the {@code @Application}-annotated class
      *                         whose configurations should be returned
@@ -969,7 +974,7 @@ public class InjectorApi {
 
         final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
 
-        return componentClassList.stream().filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
+        return Stream.concat(systemComponentClassList.stream().filter(type -> applicationClass.equals(systemComponentOwnerMap.get(type))), componentClassList.stream()).filter(type -> type.isAnnotationPresent(Configuration.class)).toList();
     }
 
     /**
@@ -1016,6 +1021,10 @@ public class InjectorApi {
      * Reloads all {@link Configuration @Configuration} instances belonging
      * to the specified {@link Application @Application} from disk.
      *
+     * <p>That covers the configurations scanned from the application's own
+     * package and the system configurations it currently owns, as returned
+     * by {@link #getConfigurationsClasses(Class)}.</p>
+     *
      * <p>Each existing instance is updated in-place, so any component
      * holding a reference will see the new values immediately. The registered
      * reload callback is invoked individually after each configuration is
@@ -1040,12 +1049,8 @@ public class InjectorApi {
             throw new InjectorException("Configuration resolver has not been initialized.");
         }
 
-        final List<Class<?>> componentClassList = applicationComponentMap.getOrDefault(applicationClass, Collections.emptyList());
-
-        for (final Class<?> type : componentClassList) {
-            if (type.isAnnotationPresent(Configuration.class)) {
-                reloadConfiguration(type);
-            }
+        for (final Class<?> type : getConfigurationsClasses(applicationClass)) {
+            reloadConfiguration(type);
         }
     }
 
@@ -1287,18 +1292,18 @@ public class InjectorApi {
      * by finding which {@link Application @Application} registered it
      * and returning that application's configuration directory.
      *
+     * <p>The owner is resolved by {@link #resolveOwningApplication(Class)},
+     * so a system configuration's file lives in the directory of the
+     * application that first registered it.</p>
+     *
      * @param componentClass the component class to look up
      * @return the configuration directory for the owning application,
      * or {@code null} if no directory is registered
      */
     private static Path resolveConfigurationDirectory(final Class<?> componentClass) {
-        for (final Map.Entry<Class<?>, List<Class<?>>> entry : applicationComponentMap.entrySet()) {
-            if (entry.getValue().contains(componentClass)) {
-                return configurationDirectoryMap.get(entry.getKey());
-            }
-        }
+        final Class<?> applicationClass = resolveOwningApplication(componentClass);
 
-        return null;
+        return applicationClass != null ? configurationDirectoryMap.get(applicationClass) : null;
     }
 
     /**
@@ -1600,7 +1605,13 @@ public class InjectorApi {
 
     /**
      * Resolves which {@link Application @Application} owns the given
-     * component class by searching the application-to-component mapping.
+     * component class.
+     *
+     * <p>An application-scoped component is owned by the application whose
+     * package it was scanned from. A system component belongs to no
+     * application's package, so it is owned by the application recorded in
+     * {@link #systemComponentOwnerMap}: the first to register it, or whichever
+     * took it over when that one shut down.</p>
      *
      * @param type the component class to look up
      * @return the owning application class, or {@code null} if not found
@@ -1612,7 +1623,7 @@ public class InjectorApi {
             }
         }
 
-        return null;
+        return systemComponentOwnerMap.get(type);
     }
 
     /**
