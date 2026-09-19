@@ -27,6 +27,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
+import org.reflections.util.ClasspathHelper;
+import org.reflections.util.ConfigurationBuilder;
+import org.reflections.util.FilterBuilder;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -636,7 +639,7 @@ public class InjectorApi {
             }
 
             final List<Class<?>> systemScannedComponentClassList = scanSystemComponents(applicationClass);
-            final List<Class<?>> applicationScannedComponentClassList = scanComponents(applicationClass.getPackageName());
+            final List<Class<?>> applicationScannedComponentClassList = scanComponents(applicationClass.getPackageName(), applicationClass.getClassLoader());
 
             // Register system components first, shared across all applications,
             // owned by the container. Only the first application to reach a
@@ -646,7 +649,7 @@ public class InjectorApi {
                     getComponentContainer().registerComponentClass(type);
                     newComponentClassList.add(type);
                     systemComponentClassList.add(type);
-                    systemComponentOwnerMap.put(type, rootClass);
+                    systemComponentOwnerMap.put(type, applicationClass);
                 }
             }
 
@@ -1380,7 +1383,12 @@ public class InjectorApi {
      * components discovered here are system-scoped: registered once and owned
      * by the container, not by the booting application. The application's own
      * package is not scanned here; it is scanned separately as
-     * application-scoped via {@link #scanComponents(String)}.</p>
+     * application-scoped via {@link #scanComponents(String, ClassLoader)}.</p>
+     *
+     * <p>Every package is scanned through the application class's own
+     * classloader, so an application shipped in its own jar is scanned against
+     * that jar rather than against whichever classloader happens to have loaded
+     * this class.</p>
      *
      * <p>Each resolved package is scanned and the results are merged into a
      * single deduplicated list, preserving the order in which packages were
@@ -1402,7 +1410,7 @@ public class InjectorApi {
 
         return Collections.unmodifiableList(UtilJava.createCollection(new ArrayList<>(), list -> {
             for (final String basePackage : basePackageList) {
-                for (final Class<?> type : scanComponents(basePackage)) {
+                for (final Class<?> type : scanComponents(basePackage, applicationClass.getClassLoader())) {
                     if (!(list.contains(type))) {
                         list.add(type);
                     }
@@ -1418,6 +1426,15 @@ public class InjectorApi {
      * via a meta-annotation (a custom stereotype that is itself annotated with
      * {@code @Singleton}).
      *
+     * <p>The scan is bound to the given classloader rather than to whichever
+     * classloader loaded this class. Where the framework ships in one jar and
+     * the scanned application in another, as with a plugin that depends on
+     * another plugin, the framework's classloader cannot see the application's
+     * classes, and the underlying scanner silently falls back to scanning the
+     * entire classpath and finds nothing. Resolving the URLs and loading the
+     * classes through the caller's classloader scans exactly the jar the
+     * application came from.</p>
+     *
      * <p>Discovery is performed in two passes:</p>
      * <ol>
      *   <li><b>Direct annotations</b>: uses
@@ -1428,14 +1445,13 @@ public class InjectorApi {
      *   <li><b>Meta-annotations</b>: iterates the raw
      *       {@link Scanners#TypesAnnotated} store values to retrieve every
      *       annotated class name indexed within the scanned package. Each
-     *       class is loaded using the classloader from a class already
-     *       resolved by pass 1 (so that isolated plugin classloaders are
-     *       honoured), and checked via {@link #isComponentAnnotated(Class)}
-     *       which walks one level of meta-annotation depth. This catches
-     *       classes annotated with custom stereotype annotations whose
-     *       annotation type lives <em>outside</em> the scanned package but is
-     *       itself meta-annotated with a known component annotation. Classes
-     *       already discovered by pass 1 are skipped.</li>
+     *       class is loaded through the given classloader and checked via
+     *       {@link #isComponentAnnotated(Class)}, which walks one level of
+     *       meta-annotation depth. This catches classes annotated with custom
+     *       stereotype annotations whose annotation type lives <em>outside</em>
+     *       the scanned package but is itself meta-annotated with a known
+     *       component annotation. Classes already discovered by pass 1 are
+     *       skipped.</li>
      * </ol>
      *
      * <p>Only concrete classes are accepted: interfaces, abstract classes,
@@ -1445,29 +1461,31 @@ public class InjectorApi {
      * classpath.</p>
      *
      * @param basePackage the package to scan
+     * @param classLoader the classloader owning the classes to scan
      * @return an unmodifiable, deduplicated list of valid component classes
      * @throws InjectorException if a non-concrete type is annotated with a
      *                           component annotation
      */
-    private static List<Class<?>> scanComponents(final String basePackage) {
+    private static List<Class<?>> scanComponents(final String basePackage, final ClassLoader classLoader) {
         if (basePackage == null) {
             throw new IllegalArgumentException("Base Package cannot be null.");
         }
 
-        final Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
+        if (classLoader == null) {
+            throw new IllegalArgumentException("Class Loader cannot be null.");
+        }
+
+        final Reflections reflections = new Reflections(new ConfigurationBuilder()
+                .addClassLoaders(classLoader)
+                .setUrls(ClasspathHelper.forPackage(basePackage, classLoader))
+                .filterInputsBy(new FilterBuilder().includePackage(basePackage))
+                .setScanners(Scanners.TypesAnnotated));
 
         final Set<Class<?>> componentClassSet = UtilJava.createCollection(new HashSet<>(), set -> {
-            // Pass 1: direct annotations (original proven behavior)
+            // Pass 1: direct annotations
             for (final Class<? extends Annotation> clazz : ANNOTATION_CLASS_LIST) {
                 set.addAll(reflections.getTypesAnnotatedWith(clazz, false));
             }
-
-            // Resolve the classloader from a class already loaded by pass 1,
-            // falling back to the context classloader if pass 1 found nothing.
-            // This ensures classes in isolated plugin classloaders can be loaded.
-            final ClassLoader classLoader = set.isEmpty()
-                    ? Thread.currentThread().getContextClassLoader()
-                    : set.iterator().next().getClassLoader();
 
             // Pass 2: meta-annotations, iterate the raw TypesAnnotated store
             // values (annotated class names) and check if any carry a
@@ -1476,7 +1494,7 @@ public class InjectorApi {
 
             for (final Set<String> classNameSet : store.values()) {
                 for (final String className : classNameSet) {
-                    if (set.stream().anyMatch(c -> c.getName().equals(className))) {
+                    if (set.stream().anyMatch(type -> type.getName().equals(className))) {
                         continue;
                     }
 
@@ -1519,7 +1537,7 @@ public class InjectorApi {
                 }
 
                 if (type.isAnnotationPresent(SoftDependency.class)) {
-                    if (!(isSoftDependencyAvailable(type.getAnnotation(SoftDependency.class)))) {
+                    if (!(isSoftDependencyAvailable(type.getAnnotation(SoftDependency.class), classLoader))) {
                         continue;
                     }
                 }
@@ -1537,23 +1555,30 @@ public class InjectorApi {
      * on the runtime classpath.
      *
      * <p>Each package is checked by converting the package name to a
-     * resource path and looking it up via the current thread's context
-     * class loader. This works for any JAR loaded at runtime, regardless
-     * of whether it is a compile-time Maven dependency.</p>
+     * resource path and looking it up via the given classloader, the
+     * one that owns the component being scanned. This works for any JAR
+     * loaded at runtime, regardless of whether it is a compile-time Maven
+     * dependency, and finds packages in an application's own jar even when
+     * the framework was loaded from a different one.</p>
      *
-     * @param annotation the {@code @SoftDependency} annotation to check
+     * @param annotation  the {@code @SoftDependency} annotation to check
+     * @param classLoader the classloader owning the component being scanned
      * @return {@code true} if all required packages are available,
      * {@code false} if any are missing
      */
-    private static boolean isSoftDependencyAvailable(final SoftDependency annotation) {
+    private static boolean isSoftDependencyAvailable(final SoftDependency annotation, final ClassLoader classLoader) {
         if (annotation == null) {
             throw new IllegalArgumentException("Annotation cannot be null");
+        }
+
+        if (classLoader == null) {
+            throw new IllegalArgumentException("Class Loader cannot be null.");
         }
 
         for (final String basePackage : annotation.value()) {
             final String path = basePackage.replace('.', '/');
 
-            if (Thread.currentThread().getContextClassLoader().getResource(path) == null) {
+            if (classLoader.getResource(path) == null) {
                 return false;
             }
         }
