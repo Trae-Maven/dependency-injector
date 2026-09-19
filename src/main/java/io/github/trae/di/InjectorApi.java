@@ -1426,14 +1426,16 @@ public class InjectorApi {
      * via a meta-annotation (a custom stereotype that is itself annotated with
      * {@code @Singleton}).
      *
-     * <p>The scan is bound to the given classloader rather than to whichever
-     * classloader loaded this class. Where the framework ships in one jar and
-     * the scanned application in another, as with a plugin that depends on
-     * another plugin, the framework's classloader cannot see the application's
-     * classes, and the underlying scanner silently falls back to scanning the
-     * entire classpath and finds nothing. Resolving the URLs and loading the
-     * classes through the caller's classloader scans exactly the jar the
-     * application came from.</p>
+     * <p>The scan is bound to the given classloader, the framework's own, and
+     * the context classloader, rather than to whichever one happens to have
+     * loaded this class. A scanned package can live in a different jar from the
+     * application that triggered the scan: an application's own package sits in
+     * its jar, while a package pulled in via {@link Scan @Scan} sits in the
+     * framework's. A classloader only resolves resources from its own jars and
+     * its parent's, so a single one leaves the other jar invisible, and the
+     * underlying scanner silently falls back to scanning the entire classpath
+     * and finds nothing. Resolving the URLs across all of them scans exactly
+     * the jars the package could be in.</p>
      *
      * <p>Discovery is performed in two passes:</p>
      * <ol>
@@ -1445,13 +1447,13 @@ public class InjectorApi {
      *   <li><b>Meta-annotations</b>: iterates the raw
      *       {@link Scanners#TypesAnnotated} store values to retrieve every
      *       annotated class name indexed within the scanned package. Each
-     *       class is loaded through the given classloader and checked via
-     *       {@link #isComponentAnnotated(Class)}, which walks one level of
-     *       meta-annotation depth. This catches classes annotated with custom
-     *       stereotype annotations whose annotation type lives <em>outside</em>
-     *       the scanned package but is itself meta-annotated with a known
-     *       component annotation. Classes already discovered by pass 1 are
-     *       skipped.</li>
+     *       class is loaded via {@link #loadClass(String, ClassLoader[])} and
+     *       checked via {@link #isComponentAnnotated(Class)}, which walks one
+     *       level of meta-annotation depth. This catches classes annotated with
+     *       custom stereotype annotations whose annotation type lives
+     *       <em>outside</em> the scanned package but is itself meta-annotated
+     *       with a known component annotation. Classes already discovered by
+     *       pass 1 are skipped.</li>
      * </ol>
      *
      * <p>Only concrete classes are accepted: interfaces, abstract classes,
@@ -1475,9 +1477,11 @@ public class InjectorApi {
             throw new IllegalArgumentException("Class Loader cannot be null.");
         }
 
+        final ClassLoader[] classLoaders = resolveClassLoaders(classLoader);
+
         final Reflections reflections = new Reflections(new ConfigurationBuilder()
-                .addClassLoaders(classLoader)
-                .setUrls(ClasspathHelper.forPackage(basePackage, classLoader))
+                .addClassLoaders(classLoaders)
+                .setUrls(ClasspathHelper.forPackage(basePackage, classLoaders))
                 .filterInputsBy(new FilterBuilder().includePackage(basePackage))
                 .setScanners(Scanners.TypesAnnotated));
 
@@ -1499,7 +1503,7 @@ public class InjectorApi {
                     }
 
                     try {
-                        final Class<?> clazz = Class.forName(className, false, classLoader);
+                        final Class<?> clazz = loadClass(className, classLoaders);
 
                         if (isComponentAnnotated(clazz)) {
                             set.add(clazz);
@@ -1537,7 +1541,7 @@ public class InjectorApi {
                 }
 
                 if (type.isAnnotationPresent(SoftDependency.class)) {
-                    if (!(isSoftDependencyAvailable(type.getAnnotation(SoftDependency.class), classLoader))) {
+                    if (!(isSoftDependencyAvailable(type.getAnnotation(SoftDependency.class), classLoaders))) {
                         continue;
                     }
                 }
@@ -1550,35 +1554,98 @@ public class InjectorApi {
     }
 
     /**
+     * Builds the ordered, deduplicated set of classloaders a scan should
+     * resolve resources and classes through.
+     *
+     * <p>The given classloader comes first, since it owns the application
+     * being scanned, followed by the framework's own, which owns any package
+     * pulled in via {@link Scan @Scan}, and finally the context classloader
+     * as a last resort. Null entries are dropped, so a class loaded by the
+     * bootstrap classloader contributes nothing.</p>
+     *
+     * @param classLoader the classloader owning the classes being scanned
+     * @return the classloaders to scan through, in resolution order
+     */
+    private static ClassLoader[] resolveClassLoaders(final ClassLoader classLoader) {
+        if (classLoader == null) {
+            throw new IllegalArgumentException("Class Loader cannot be null.");
+        }
+
+        return UtilJava.createCollection(new ArrayList<ClassLoader>(), list -> {
+            list.add(classLoader);
+
+            for (final ClassLoader candidate : List.of(InjectorApi.class.getClassLoader(), Thread.currentThread().getContextClassLoader())) {
+                if (candidate != null && !(list.contains(candidate))) {
+                    list.add(candidate);
+                }
+            }
+        }).toArray(new ClassLoader[0]);
+    }
+
+    /**
+     * Loads the named class from the first of the given classloaders that
+     * can resolve it.
+     *
+     * <p>A scanned package can live in a different jar from the one that
+     * triggered the scan, as with a framework package pulled in via
+     * {@link Scan @Scan}, so the name is tried against each classloader in
+     * turn rather than against a single one.</p>
+     *
+     * @param className    the binary name of the class to load
+     * @param classLoaders the classloaders to try, in order
+     * @return the loaded class
+     * @throws ClassNotFoundException if no classloader can resolve the name
+     */
+    private static Class<?> loadClass(final String className, final ClassLoader[] classLoaders) throws ClassNotFoundException {
+        for (final ClassLoader classLoader : classLoaders) {
+            try {
+                return Class.forName(className, false, classLoader);
+            } catch (final ClassNotFoundException ignored) {
+            }
+        }
+
+        throw new ClassNotFoundException(className);
+    }
+
+    /**
      * Checks whether all packages specified by the given
      * {@link SoftDependency @SoftDependency} annotation are present
      * on the runtime classpath.
      *
-     * <p>Each package is checked by converting the package name to a
-     * resource path and looking it up via the given classloader, the
-     * one that owns the component being scanned. This works for any JAR
-     * loaded at runtime, regardless of whether it is a compile-time Maven
-     * dependency, and finds packages in an application's own jar even when
-     * the framework was loaded from a different one.</p>
+     * <p>Each package is checked by converting the package name to a resource
+     * path and looking it up through each of the given classloaders in turn,
+     * the same set the scan itself used. This works for any JAR loaded at
+     * runtime, regardless of whether it is a compile-time Maven dependency,
+     * and finds packages in an application's own jar even when the framework
+     * was loaded from a different one.</p>
      *
-     * @param annotation  the {@code @SoftDependency} annotation to check
-     * @param classLoader the classloader owning the component being scanned
+     * @param annotation   the {@code @SoftDependency} annotation to check
+     * @param classLoaders the classloaders to resolve the packages through
      * @return {@code true} if all required packages are available,
      * {@code false} if any are missing
      */
-    private static boolean isSoftDependencyAvailable(final SoftDependency annotation, final ClassLoader classLoader) {
+    private static boolean isSoftDependencyAvailable(final SoftDependency annotation, final ClassLoader[] classLoaders) {
         if (annotation == null) {
             throw new IllegalArgumentException("Annotation cannot be null");
         }
 
-        if (classLoader == null) {
-            throw new IllegalArgumentException("Class Loader cannot be null.");
+        if (classLoaders == null) {
+            throw new IllegalArgumentException("Class Loaders cannot be null.");
         }
 
         for (final String basePackage : annotation.value()) {
             final String path = basePackage.replace('.', '/');
 
-            if (classLoader.getResource(path) == null) {
+            boolean found = false;
+
+            for (final ClassLoader classLoader : classLoaders) {
+                if (classLoader.getResource(path) != null) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!(found)) {
                 return false;
             }
         }
